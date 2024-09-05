@@ -80,6 +80,16 @@ class MountModelRequest(BaseModel):
             }
         }
 
+# Define a request model for deleting a model
+class DeleteModelRequest(BaseModel):
+    model_name: str = Field(default="facebook/mbart-large-50-many-to-many-mmt", description="The Hugging Face model name")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "model_name": "facebook/mbart-large-50-many-to-many-mmt"
+            }
+        }
 
 # Global variables for tracking state
 current_model = None
@@ -173,7 +183,7 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     # Load model and tokenizer based on model type
     if requested_model_type == "translation":
-        current_model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        current_model = SUPPORTED_MODEL_TYPES["translation"].from_pretrained(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         # Setup the translation pipeline with language parameters if provided
@@ -194,7 +204,7 @@ async def mount_model(request: MountModelRequest) -> dict:
             )
     
     elif requested_model_type == "text-generation":
-        current_model = AutoModelForCausalLM.from_pretrained(model_path)
+        current_model = SUPPORTED_MODEL_TYPES["text-generation"].from_pretrained(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         # Setup the text generation pipeline
@@ -221,6 +231,32 @@ async def unmount_model() -> dict:
 
     current_model, tokenizer, current_model_type = None, None, None
     return {"message": "Model unmounted successfully."}
+
+@app.post("/delete_model/",
+          summary="Delete Local Model",
+          description="Delete the local files of a previously mounted model based on the model name.")
+async def delete_model(request: DeleteModelRequest) -> dict:
+    global tokenizer, current_model, current_model_type
+    model_name = request.model_name
+    
+    # Construct the model path
+    model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
+
+    # Check if the model path exists
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' does not exist at path '{model_path}'.")
+
+    # Unmount the model
+    if current_model or tokenizer:
+       current_model, tokenizer, current_model_type = None, None, None
+       
+    # Remove the model directory and its contents
+    try:
+        shutil.rmtree(model_path)
+        return {"message": f"Model '{model_name}' has been deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred while deleting the model: {str(e)}")
+    
 
 # Translation API Endpoint
 @app.post("/translate/",
@@ -259,6 +295,7 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
         generated_text = generated_text[0]['generated_text']
 
     return {"generated_text": generated_text}
+
 
 # Function to move snapshot files to the model path
 def move_snapshot_files(model_name, download_directory):

@@ -74,11 +74,13 @@ You can interact with the API and test its endpoints by visiting:
 
 ## API Endpoints
 
-- `POST /download_model/`: Initiate downloading a model from Hugging Face.
-- `GET /download_progress/`: Check the progress of a download.
-- `POST /mount_model/`: Load a downloaded model into memory for use.
-- `POST /unmount_model/`: Release the currently mounted model.
-- `POST /translate/`: Translate text using the currently mounted model.
+- `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
+- `GET /download_progress/`: Polling method to fetch the current download progress of the model, if a download is in progress.
+- `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
+- `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
+- `POST /delete_model/`: Delete the local files of a previously mounted model based on the model name
+- `POST /translate/`: Translate input text using the mounted translation model.
+- `POST /generate/`: Generate text based on the input prompt using the mounted text generation model..
 
 ## Notes
 
