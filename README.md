@@ -1,4 +1,4 @@
-# Hugging Face Translation Service
+# Hugging Face Transformers Service
 
 ## Overview
 
@@ -31,7 +31,7 @@ Activate the virtual environment:
 
 ```bash
 # Windows
-venv\Scripts\activate
+venv\scripts\activate
 
 # Linux/Mac
 source venv/bin/activate
@@ -64,13 +64,13 @@ HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
 Run the FastAPI application:
 
 ```bash
-python src/fastapi_service.py
+python src/huggingface_ts.py
 ```
 
 ### Step 7: Access Swagger API
 
 You can interact with the API and test its endpoints by visiting:
-[http://localhost:8000/docs](http://localhost:8000/docs)
+[http://localhost:8001/docs](http://localhost:8001/docs)
 
 ## API Endpoints
 
@@ -91,7 +91,7 @@ Ensure to monitor download progress through the associated API endpoints and han
 To build your Docker image, run the following command from the root of your project directory (where your Dockerfile is located):
 
 ```bash
-docker build --no-cache -t huggingface_service . --progress=plain
+docker build --no-cache -t huggingface_ts . --progress=plain
 ```
 
 ### Run Docker Image
@@ -103,7 +103,7 @@ You have two options for running the Docker image based on your environment.
 When running the Docker image on a server, set the environment variable `HUGGINGFACE_CACHE_DIR` to specify the path in the Docker container. Execute the following command:
 
 ```bash
-docker run -d -p 8000:8000 -e HUGGINGFACE_CACHE_DIR=/app/model_cache huggingface_service
+docker run -d -p 8001:8001 -e HUGGINGFACE_CACHE_DIR=/app/model_cache huggingface_ts
 ```
 
 #### 2. Running the Docker Image Locally
@@ -111,7 +111,7 @@ docker run -d -p 8000:8000 -e HUGGINGFACE_CACHE_DIR=/app/model_cache huggingface
 If you are running the Docker image locally, use the following command to mount the `C:/HuggingFace/model_cache` directory from your host to the `/app/model_cache` directory inside the container. This allows the application to access and store downloaded models locally:
 
 ```bash
-docker run -d -p 8000:8000 -e HUGGINGFACE_CACHE_DIR=/app/model_cache -v C:/HuggingFace/model_cache:/app/model_cache huggingface_service
+docker run -d -p 8001:8001 -e HUGGINGFACE_CACHE_DIR=/app/model_cache -v C:/HuggingFace/model_cache:/app/model_cache huggingface_ts
 ```
 
 ### View Running Containers

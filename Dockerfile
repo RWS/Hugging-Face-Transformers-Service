@@ -8,8 +8,8 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/fastapi_service.py ./src/fastapi_service.py
+COPY src/huggingface_ts.py ./src/huggingface_ts.py
 
-EXPOSE 8000
+EXPOSE 8001
 
-CMD ["python", "-m", "uvicorn", "src.fastapi_service:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "src.huggingface_ts:app", "--host", "0.0.0.0", "--port", "8001"]
