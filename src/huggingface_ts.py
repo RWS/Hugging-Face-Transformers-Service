@@ -37,9 +37,7 @@ class TranslationRequest(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "text": "Hello, how are you?",
-                "source_language": "en-US",
-                "target_language": "it-IT"
+                "text": "Hello, how are you?"
             }
         }
 
