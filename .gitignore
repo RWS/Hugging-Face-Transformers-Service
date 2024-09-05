@@ -49,4 +49,4 @@ dist/**
 package.nls.*.json
 l10n/
 python-env-tools/**
-venv/  # Ignoring the 'venv' directory for Python virtual environments
+venv/**
