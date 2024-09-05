@@ -33,8 +33,6 @@ SUPPORTED_MODEL_TYPES = {
 
 class TranslationRequest(BaseModel):
     text: str = Field(default="Hello, how are you?", description="The source content that should be translated")
-    source_language: Optional[str] = Field(default="", description="Language code for the source language (e.g., 'en-US' for English).")
-    target_language: Optional[str] = Field(default="", description="Language code for the target language (e.g., 'it_IT' for Italian).")
     
     class Config:
         schema_extra = {
@@ -73,6 +71,8 @@ class DownloadModelRequest(BaseModel):
 class MountModelRequest(BaseModel):
     model_name: str = Field(default="facebook/mbart-large-50-many-to-many-mmt", description="The Hugging Face model name")
     model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text-generation'.")
+    source_language: Optional[str] = Field(default="", description="Language code for the source language (e.g., 'en-US' for English).")
+    target_language: Optional[str] = Field(default="", description="Language code for the target language (e.g., 'it_IT' for Italian).")
 
     class Config:
         schema_extra = {
@@ -87,6 +87,8 @@ class MountModelRequest(BaseModel):
 current_model = None
 current_model_type = None  
 tokenizer = None
+translator = None  # For translation models
+text_generator = None  # For text generation models
 is_downloading = False
 download_progress = []
 download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
@@ -161,28 +163,53 @@ async def get_progress() -> JSONResponse:
 
 @app.post("/mount_model/",
           summary="Mount a Model",
-          description="Mount a specified downloaded model for use. Ensure the model is downloaded beforehand.")
+          description="Mount the specified model and setup the appropriate pipeline.")
 async def mount_model(request: MountModelRequest) -> dict:
-    """Mounts a specified model."""
-    global current_model, tokenizer, current_model_type
+    global current_model, tokenizer, translator, text_generator
     model_name = request.model_name
     requested_model_type = request.model_type
-
-    if requested_model_type not in SUPPORTED_MODEL_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported model type: '{requested_model_type}'. Supported values are: {list(SUPPORTED_MODEL_TYPES.keys())}."
-        )
 
     model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path)
-    current_model_type = requested_model_type
 
-    return {"message": "Model mounted successfully.", "model_type": current_model_type, "model_path": model_path}
+    # Load model and tokenizer based on model type
+    if requested_model_type == "translation":
+        current_model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        # Setup the translation pipeline with language parameters if provided
+        if request.source_language and request.target_language:
+            translator = pipeline(
+                "translation",
+                model=current_model,
+                tokenizer=tokenizer,
+                src_lang=request.source_language,
+                tgt_lang=request.target_language
+            )
+        else:
+            # Setup pipeline without language parameters
+            translator = pipeline(
+                "translation",
+                model=current_model,
+                tokenizer=tokenizer
+            )
+    
+    elif requested_model_type == "text-generation":
+        current_model = AutoModelForCausalLM.from_pretrained(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        # Setup the text generation pipeline
+        text_generator = pipeline(
+            "text-generation",
+            model=current_model,
+            tokenizer=tokenizer,
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported model type provided.")
+
+    return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
 
 @app.post("/unmount_model/",
           summary="Unmount the Current Model",
@@ -200,29 +227,11 @@ async def unmount_model() -> dict:
 # Translation API Endpoint
 @app.post("/translate/",
           summary="Translate Text",
-          description="Translate input text using the mounted translation model. Supports models that require source and target languages or those that do not.")
+          description="Translate input text using the mounted translation model.")
 async def translate(translation_request: TranslationRequest) -> dict:
-    global current_model, tokenizer
-    if not current_model or not tokenizer:
-        raise HTTPException(status_code=400, detail="No model is currently mounted.")
-    
-    # Check if source and target languages are provided
-    if translation_request.source_language and translation_request.target_language:
-        # Setup the translator with language parameters
-        translator = pipeline(
-            "translation",
-            model=current_model,
-            tokenizer=tokenizer,
-            src_lang=translation_request.source_language,
-            tgt_lang=translation_request.target_language
-        )
-    else:
-        # Setup the translator without language parameters
-        translator = pipeline(
-            "translation",
-            model=current_model,
-            tokenizer=tokenizer
-        )
+    global translator
+    if not translator:
+        raise HTTPException(status_code=400, detail="No translation model is currently mounted.")
     
     # Perform translation
     translated_text = translator(translation_request.text)
@@ -233,26 +242,24 @@ async def translate(translation_request: TranslationRequest) -> dict:
 
     return {"translated_text": translated_text}
 
-
-# Text Generation API Endpoint
 @app.post("/generate/",
           summary="Generate Text",
           description="Generate text based on the input prompt using the mounted text generation model.")
-async def generate_text(text_generation_request: TextGenerationRequest) -> dict:
-    """Generates text based on the input prompt using the mounted text generation model."""
-    global current_model, tokenizer, current_model_type
-    if not current_model or not tokenizer:
-        raise HTTPException(status_code=400, detail="No model is currently mounted.")
+async def generate(text_generation_request: TextGenerationRequest) -> dict:
+    global text_generator
+    if not text_generator:
+        raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
     
-    inputs = tokenizer(text_generation_request.prompt, return_tensors="pt")
-    with torch.no_grad():
-        outputs = current_model.generate(
-            **inputs, 
-            max_length=text_generation_request.max_tokens, 
-            temperature=text_generation_request.temperature
-        )
-    
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Perform text generation
+    generated_text = text_generator(
+        text_generation_request.prompt,
+        max_length=text_generation_request.max_tokens
+    )
+
+    # Extract the generated text from the response
+    if isinstance(generated_text, list):
+        generated_text = generated_text[0]['generated_text']
+
     return {"generated_text": generated_text}
 
 # Function to move snapshot files to the model path
