@@ -42,7 +42,7 @@ class TranslationRequest(BaseModel):
         }
 
 class TextGenerationRequest(BaseModel):
-    prompt: str = Field(default="Translate the following from 'en-US' to 'it-IT': \nOnce upon a time in a land far away", description="The User Prompt comprises of custom instructions provided by the user, detailing the specific requirements for translation.")
+    prompt: list = Field(default="[{\"role\": \"system\",\"content\": \"you are a helpful translator\"},{\"role\": \"user\",\"content\": \"translate this from English to Italian: The cat is on the table.\"}]", description="The User Prompt comprises of custom instructions provided by the user, detailing the specific requirements for translation.")
     max_tokens: int = Field(default=500, description="The maximum number of tokens to generate.")
     temperature: float = Field(default=1.0, description="Sampling temperature for generation, where higher values lead to more random outputs.")
     
@@ -57,37 +57,39 @@ class TextGenerationRequest(BaseModel):
 
 # Input request models
 class DownloadModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/mbart-large-50-many-to-many-mmt", description="The Hugging Face model name")
+    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
 
     class Config:
         schema_extra = {
             "example": {
-                "model_name": "facebook/mbart-large-50-many-to-many-mmt"
+                "model_name": "facebook/nllb-200-distilled-600M"
             }
         }
 
 class MountModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/mbart-large-50-many-to-many-mmt", description="The Hugging Face model name")
+    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
     model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text-generation'.")
-    source_language: Optional[str] = Field(default="", description="Language code for the source language (e.g., 'en-US' for English).")
-    target_language: Optional[str] = Field(default="", description="Language code for the target language (e.g., 'it_IT' for Italian).")
+    source_language: Optional[str] = Field(default="eng_Latn", description="[Optional] Language code for the source language (e.g., 'eng_Latn' for English).")
+    target_language: Optional[str] = Field(default="ita_Latn", description="[Optional] Language code for the target language (e.g., 'ita_Latn' for Italian).")
 
     class Config:
         schema_extra = {
             "example": {
-                "model_name": "facebook/mbart-large-50-many-to-many-mmt",
-                "model_type": "translation"
+                "model_name": "facebook/nllb-200-distilled-600M",
+                "model_type": "translation | text-generation",
+                "source_language": "eng_Latn",
+                "target_language": "ita_Latn"
             }
         }
 
 # Define a request model for deleting a model
 class DeleteModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/mbart-large-50-many-to-many-mmt", description="The Hugging Face model name")
+    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
 
     class Config:
         schema_extra = {
             "example": {
-                "model_name": "facebook/mbart-large-50-many-to-many-mmt"
+                "model_name": "facebook/nllb-200-distilled-600M"
             }
         }
 
@@ -100,6 +102,7 @@ text_generator = None  # For text generation models
 is_downloading = False
 download_progress = []
 download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
+huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
 
 @app.post("/download_model/", 
           summary="Download a Model",
@@ -137,7 +140,11 @@ async def download_model(request: DownloadModelRequest) -> StreamingResponse:
             
             for index, file in enumerate(filtered_files):
                 try:
-                    file_path = hf_hub_download(repo_id=model_name, filename=file.rfilename, cache_dir=download_directory, force_download=True)
+                    file_path = hf_hub_download(repo_id=model_name, 
+                                                filename=file.rfilename, 
+                                                cache_dir=download_directory, 
+                                                force_download=True,
+                                                token=huggingface_token)
                     progress_update = {
                         "file_name": file.rfilename,
                         "current_index": index + 1,
@@ -171,9 +178,9 @@ async def get_progress() -> JSONResponse:
 
 @app.post("/mount_model/",
           summary="Mount a Model",
-          description="Mount the specified model and setup the appropriate pipeline.")
+          description="Mount the specified model and setup the appropriate pipeline.\n The 'source_language' and 'target_language' parameters are optional for models of type 'translation'")
 async def mount_model(request: MountModelRequest) -> dict:
-    global current_model, tokenizer, translator, text_generator
+    global current_model, tokenizer, translator, text_generator, current_model_type
     model_name = request.model_name
     requested_model_type = request.model_type
 
@@ -183,13 +190,14 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     # Load model and tokenizer based on model type
     if requested_model_type == "translation":
-        current_model = SUPPORTED_MODEL_TYPES["translation"].from_pretrained(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
 
+        current_model_type = requested_model_type
         # Setup the translation pipeline with language parameters if provided
         if request.source_language and request.target_language:
             translator = pipeline(
-                "translation",
+                requested_model_type,
                 model=current_model,
                 tokenizer=tokenizer,
                 src_lang=request.source_language,
@@ -198,24 +206,32 @@ async def mount_model(request: MountModelRequest) -> dict:
         else:
             # Setup pipeline without language parameters
             translator = pipeline(
-                "translation",
+                requested_model_type,
                 model=current_model,
                 tokenizer=tokenizer
             )
     
-    elif requested_model_type == "text-generation":
-        current_model = SUPPORTED_MODEL_TYPES["text-generation"].from_pretrained(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
+    elif requested_model_type == "text-generation":       
+        current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)        
+        tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
 
-        # Setup the text generation pipeline
+        current_model_type = requested_model_type
+
         text_generator = pipeline(
-            "text-generation",
+            requested_model_type,
             model=current_model,
             tokenizer=tokenizer,
         )
 
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
+    
+
+    # Move model to GPU if available
+    print("attempt to load cuta")
+    if torch.cuda.is_available():
+        current_model.to('cuda')
+        print(f"Model '{model_name}' moved to GPU.")
 
     return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
 
@@ -232,7 +248,7 @@ async def unmount_model() -> dict:
     current_model, tokenizer, current_model_type = None, None, None
     return {"message": "Model unmounted successfully."}
 
-@app.post("/delete_model/",
+@app.delete("/delete_model/",
           summary="Delete Local Model",
           description="Delete the local files of a previously mounted model based on the model name.")
 async def delete_model(request: DeleteModelRequest) -> dict:
@@ -267,13 +283,13 @@ async def translate(translation_request: TranslationRequest) -> dict:
     if not translator:
         raise HTTPException(status_code=400, detail="No translation model is currently mounted.")
     
-    # Perform translation
+  # Perform translation directly with the input text
     translated_text = translator(translation_request.text)
 
     # Extract the translated text from the response
     if isinstance(translated_text, list):
         translated_text = translated_text[0]['translation_text']
-
+    
     return {"translated_text": translated_text}
 
 @app.post("/generate/",
@@ -281,19 +297,24 @@ async def translate(translation_request: TranslationRequest) -> dict:
           description="Generate text based on the input prompt using the mounted text generation model.")
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
     global text_generator
+
     if not text_generator:
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
     
-    # Perform text generation
+    # Construct the full prompt from the structured input
+    prompt_text = " ".join([msg['content'] for msg in text_generation_request.prompt])
+
+    # Perform text generation directly with the prompt
     generated_text = text_generator(
-        text_generation_request.prompt,
-        max_length=text_generation_request.max_tokens
+        prompt_text,
+        max_length=text_generation_request.max_tokens,
+        temperature=text_generation_request.temperature
     )
 
     # Extract the generated text from the response
     if isinstance(generated_text, list):
         generated_text = generated_text[0]['generated_text']
-
+    
     return {"generated_text": generated_text}
 
 
