@@ -53,10 +53,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 ### Step 5: Configure Environment Variables
 
-Open the `.env` file located at the project's root directory and set the cache directory for Hugging Face models, if necessary:
+Open the `.env` file located at the project's root directory and set your API Token to connect to Hugging Face and the cache directory for models, if neccessary:
 
 ```plaintext
 HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
+HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
 ```
 
 ### Step 6: Start the FastAPI Server
@@ -78,7 +79,7 @@ You can interact with the API and test its endpoints by visiting:
 - `GET /download_progress/`: Polling method to fetch the current download progress of the model, if a download is in progress.
 - `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
 - `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
-- `POST /delete_model/`: Delete the local files of a previously mounted model based on the model name
+- `DEL /delete_model/`: Delete the local files of a previously mounted model based on the model name
 - `POST /translate/`: Translate input text using the mounted translation model.
 - `POST /generate/`: Generate text based on the input prompt using the mounted text generation model..
 
