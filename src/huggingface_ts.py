@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", message=".*clean_up_tokenization_spaces.*")
 
 app = FastAPI(
     title="Hugging Face Transformers Service",
-    description="API for downloading, mounting, and translating using machine learning models from Hugging Face",
+    description="This is a FastAPI application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The service allows users to **download and mount** models locally, making it possible to run model inference without requiring an internet connection once the models are downloaded.",
     version="1.0.0",
 )
 
@@ -58,17 +58,6 @@ class TextGenerationRequest(BaseModel):
             }
         }
 
-# Input request models
-class DownloadModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "model_name": "facebook/nllb-200-distilled-600M"
-            }
-        }
-
 class MountModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
     model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text2text-generation', 'text-generation'.")
@@ -85,8 +74,7 @@ class MountModelRequest(BaseModel):
             }
         }
 
-# Define a request model for deleting a model
-class DeleteModelRequest(BaseModel):
+class ModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
 
     class Config:
@@ -126,7 +114,7 @@ async def list_models() -> List[Dict[str, str]]:
                 continue
 
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name 
-            model_type = infer_model_type(model_dir)   # Your function to infer model type
+            model_type = infer_model_type(model_dir) 
 
             models_info.append({
                 "model_name": model_name,
@@ -141,7 +129,7 @@ async def list_models() -> List[Dict[str, str]]:
 @app.post("/download_model/", 
           summary="Download a Model",
           description="Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.")
-async def download_model(request: DownloadModelRequest) -> StreamingResponse:
+async def download_model(request: ModelRequest) -> StreamingResponse:
     """Download specified model and stream progress."""
     global is_downloading, download_progress   
     model_name = request.model_name
@@ -285,7 +273,7 @@ async def unmount_model() -> dict:
 @app.delete("/delete_model/",
           summary="Delete Local Model",
           description="Delete the local files of a previously mounted model based on the model name.")
-async def delete_model(request: DeleteModelRequest) -> dict:
+async def delete_model(request: ModelRequest) -> dict:
     global tokenizer, current_model, current_model_type
     model_name = request.model_name
     
@@ -330,24 +318,56 @@ async def translate(translation_request: TranslationRequest) -> dict:
           summary="Generate Text",
           description="Generate text based on the input prompt using the mounted text generation model.")
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
-    global text_generator
+    global text_generator, tokenizer, current_model, current_model_type
 
     if not text_generator:
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
     
-    # Construct the full prompt from the structured input
-    prompt_text = " ".join([msg['content'] for msg in text_generation_request.prompt])
+    # Construct the conversation format expected by the model
+    conversation = []
 
-    # Perform text generation directly with the prompt
-    generated_text = text_generator(
-        prompt_text,
-        max_length=text_generation_request.max_tokens,
-        temperature=text_generation_request.temperature
-    )
+    # Add user/content messages
+    for msg in text_generation_request.prompt:
+        conversation.append({"role": msg['role'], "content": msg['content']})
 
-    # Extract the generated text from the response
-    if isinstance(generated_text, list):
-        generated_text = generated_text[0]['generated_text']
+
+    # Generating the input IDs as in the example
+    input_ids = tokenizer.apply_chat_template(conversation, add_generation_prompt=True, return_tensors="pt").to(current_model.device)
+
+    attention_mask = (input_ids != tokenizer.pad_token_id).long()  # This creates a mask indicating non-padding tokens
+
+    # Prepare generation parameters (you may need to adjust these)
+    generate_kwargs = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,  # Add the attention mask here
+        "max_new_tokens": text_generation_request.max_tokens,
+        "temperature": text_generation_request.temperature,
+        # "do_sample": True,  # Change to True to enable sampling
+        #"top_p": 0.95,
+        #"top_k": 50,
+        "eos_token_id": tokenizer.eos_token_id  # Adjust based on your model specifics
+    }
+
+    # Generate the text
+    with torch.no_grad():
+        generated_text = current_model.generate(**generate_kwargs)
+
+    # Extract the generated text
+    generated_text = tokenizer.decode(generated_text[0], skip_special_tokens=True)
+
+    # Format the conversation into a single string expected by the model
+    # formatted_prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation])
+
+    # # Perform text generation directly with the prompt
+    # generated_text = text_generator(
+    #     formatted_prompt,
+    #     max_length=text_generation_request.max_tokens,
+    #     temperature=text_generation_request.temperature
+    # )
+
+    # # Extract the generated text from the response
+    # if isinstance(generated_text, list):
+    #     generated_text = generated_text[0]['generated_text']
     
     return {"generated_text": generated_text}
 
