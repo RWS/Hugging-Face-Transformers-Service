@@ -40,8 +40,7 @@ SUPPORTED_MODEL_TYPES = {
 
 - **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
 
--
-
+<br>
 ## Setup Instructions
 
 ### Step 1: Check Python & Pip Installation
