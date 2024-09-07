@@ -128,6 +128,8 @@ python src/huggingface_ts.py
 You can interact with the API and test its endpoints by visiting:
 [http://localhost:8001/docs](http://localhost:8001/docs)
 
+<br>
+
 ## API Endpoints
 
 - `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
@@ -141,6 +143,8 @@ You can interact with the API and test its endpoints by visiting:
 ## Notes
 
 Ensure to monitor download progress through the associated API endpoints and handle errors according to the status returned.
+
+<br>
 
 ## Docker Instructions
 
