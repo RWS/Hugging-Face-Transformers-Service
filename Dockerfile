@@ -12,7 +12,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/huggingface_ts.py ./src/huggingface_ts.py
+COPY LICENSE .
+COPY README.md .
 
-EXPOSE 8001
+EXPOSE ${PORT}  
 
 CMD ["python", "-m", "uvicorn", "src.huggingface_ts:app", "--host", "0.0.0.0", "--port", "${PORT}"]
