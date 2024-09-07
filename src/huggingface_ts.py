@@ -27,6 +27,7 @@ app = FastAPI(
 # Supported model mappings
 SUPPORTED_MODEL_TYPES = {
     'translation': AutoModelForSeq2SeqLM,
+    'text2text-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
 }
 
@@ -68,7 +69,7 @@ class DownloadModelRequest(BaseModel):
 
 class MountModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-    model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text-generation'.")
+    model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text2text-generation', 'text-generation'.")
     source_language: Optional[str] = Field(default="eng_Latn", description="[Optional] Language code for the source language (e.g., 'eng_Latn' for English).")
     target_language: Optional[str] = Field(default="ita_Latn", description="[Optional] Language code for the target language (e.g., 'ita_Latn' for Italian).")
 
@@ -76,7 +77,7 @@ class MountModelRequest(BaseModel):
         schema_extra = {
             "example": {
                 "model_name": "facebook/nllb-200-distilled-600M",
-                "model_type": "translation | text-generation",
+                "model_type": "translation | text2text-generation | text-generation",
                 "source_language": "eng_Latn",
                 "target_language": "ita_Latn"
             }
@@ -189,7 +190,7 @@ async def mount_model(request: MountModelRequest) -> dict:
         raise HTTPException(status_code=404, detail="Model path does not exist.")
 
     # Load model and tokenizer based on model type
-    if requested_model_type == "translation":
+    if requested_model_type in ("translation","text2text-generation"):
         current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)
         tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
 
