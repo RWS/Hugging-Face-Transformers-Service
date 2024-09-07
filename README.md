@@ -102,14 +102,18 @@ HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
 
 # Your Hugging Face API token for authentication
 HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
+
+# Port to run the FastAPI application
+PORT=8001  # Adjust this to change the application's running port
 ```
 
 **Variable Descriptions**:
 
 - `HUGGINGFACE_CACHE_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
 - `HUGGINGFACE_TOKEN`: Replace `Your_Hugging_Face_API_Token` with your actual Hugging Face API token. You can obtain this token from your Hugging Face account settings.
+- `PORT`: Set the port number on which the FastAPI application will listen. The default is `8001`, but you can change this to suit your needs.
 
-Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively.
+Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the FastAPI application on the specified port.
 
 ### Step 6: Start the FastAPI Server
 
