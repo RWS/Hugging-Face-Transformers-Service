@@ -11,7 +11,9 @@ import asyncio
 from dotenv import load_dotenv
 import warnings
 import shutil
-from typing import Optional
+from typing import Optional, List, Dict 
+import re
+
 
 # Load environment variables
 load_dotenv()
@@ -102,9 +104,39 @@ translator = None  # For translation models
 text_generator = None  # For text generation models
 is_downloading = False
 download_progress = []
-download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
-huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
-port = os.getenv("PORT", "8001")  # Default to 8001 if PORT is not set
+port = os.getenv("PORT", "8001").strip()  # Ensure extra whitespace is removed
+download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache").strip()
+huggingface_token = os.getenv("HUGGINGFACE_TOKEN").strip()
+
+
+# Define a new endpoint to list downloaded models
+@app.get("/list_models/", response_model=List[Dict[str, str]], summary="List downloaded models")
+async def list_models() -> List[Dict[str, str]]:
+    """List all downloaded models along with their types."""
+    model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
+    models_info = []
+
+    try:
+        # List directories in the cache directory to find downloaded models
+        model_dirs = [d for d in os.listdir(model_cache_dir) if os.path.isdir(os.path.join(model_cache_dir, d))]
+
+        for model_dir in model_dirs:
+            # Skip any directories that start with '.' or are named '.locks'
+            if model_dir.startswith('.') or model_dir == '.locks':
+                continue
+
+            model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name 
+            model_type = infer_model_type(model_dir)   # Your function to infer model type
+
+            models_info.append({
+                "model_name": model_name,
+                "model_type": model_type
+            })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
+    
+    return models_info
 
 @app.post("/download_model/", 
           summary="Download a Model",
@@ -350,6 +382,67 @@ def filter_unwanted_files(files):
     unwanted_files = {'.gitattributes'}
     return [file for file in files if file.rfilename not in unwanted_files]
 
+def infer_model_type(model_dir: str) -> str:
+    """Infer model type based on the 'config.json' or 'README.md' contents."""
+    model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
+    model_path = os.path.join(model_cache_dir, model_dir)
+
+    # Construct path for README.md
+    readme_path = os.path.join(model_path, 'README.md')
+
+    # Check the README for specific information
+    if os.path.exists(readme_path):
+        with open(readme_path, 'r', encoding='utf-8') as f:
+            readme_content = f.read()
+            
+            # Use regex to find the pipeline_tag value
+            pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content)
+            if pipeline_tag_match:
+                pipeline_tag_value = pipeline_tag_match.group(1).strip()
+                # Check if the pipeline_tag_value matches known types
+                if pipeline_tag_value == "translation":
+                    return "translation"
+                elif pipeline_tag_value == "text-generation":
+                    return "text-generation"
+                elif pipeline_tag_value == "text2text-generation":
+                    return "text2text-generation"
+
+            # Search for tags specifically
+            tags_match = re.search(r'tags:\s*-\s*([\w-]+(?:\n- [\w-]+)*)', readme_content)
+            if tags_match:
+                tags_list = tags_match.group(0).splitlines()
+                # Look for specific entries in the tags list
+                for tag in tags_list:
+                    tag_value = tag.strip().replace('- ', '').strip()  # Clean tag value
+                    if tag_value == "translation":
+                        return "translation"
+                    elif tag_value in ("text-generation", "chat"):
+                        return "text-generation"
+                    elif tag_value == "text2text-generation":
+                        return "text2text-generation"              
+
+    # Then, check in the config.json
+    config_path = os.path.join(model_path, 'config.json')
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            config = json.load(f)
+            model_type = config.get("model_type", "").lower().strip()
+
+            # If not found at the top level, check within text_config if it exists
+            if not model_type and "text_config" in config:
+                model_type = config["text_config"].get("model_type", "").lower().strip()
+
+            # Infer from model_type
+            if model_type in ["m2m_100", "marian", "mbart", "mistral"]:
+                return "translation"
+            elif model_type in ["qwen2", "t5"]:
+                return "text2text-generation"
+            elif model_type in ["phi3", "llama"]:
+                return "text-generation"
+            # Expand with other mappings based on model_type as needed.
+
+    return "unknown"  # Fallback if type cannot be determined
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(port))

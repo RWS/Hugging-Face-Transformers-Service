@@ -55,7 +55,14 @@ pip --version
 
 If not installed, download Python from the [official website](https://www.python.org/downloads/) and install it, ensuring you select the option to add Python to your PATH.
 
-### Step 2: Create a Virtual Environment
+### Step 2 Clone the Repository
+
+```bash
+git clone https://github.com/RWS/Hugging-Face-Transformers-Service.git
+cd Hugging-Face-Transformers-Service
+```
+
+### Step 3: Create a Virtual Environment
 
 Navigate to your project root in the terminal and create a virtual environment:
 
@@ -63,7 +70,7 @@ Navigate to your project root in the terminal and create a virtual environment:
 python -m venv venv
 ```
 
-### Step 3: Activate the Virtual Environment
+### Step 4: Activate the Virtual Environment
 
 Activate the virtual environment:
 
@@ -81,15 +88,15 @@ To deactivate:
 deactivate
 ```
 
-### Step 4: Install Required Packages
+### Step 5: Install Required Packages
 
 Install the dependencies listed in `requirements.txt`:
 
 ```bash
-RUN pip install --no-cache-dir -r requirements.txt
+pip install --no-cache-dir -r requirements.txt
 ```
 
-### Step 5: Configure Environment Variables
+### Step 6: Configure Environment Variables
 
 To connect to Hugging Face and manage model caching, you'll need to set up your environment variables.
 
@@ -115,7 +122,7 @@ PORT=8001  # Adjust this to change the application's running port
 
 Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the FastAPI application on the specified port.
 
-### Step 6: Start the FastAPI Server
+### Step 7: Start the FastAPI Server
 
 Run the FastAPI application:
 
@@ -123,7 +130,7 @@ Run the FastAPI application:
 python src/huggingface_ts.py
 ```
 
-### Step 7: Access Swagger API
+### Step 8: Access Swagger API
 
 You can interact with the API and test its endpoints by visiting:
 [http://localhost:8001/docs](http://localhost:8001/docs)
@@ -137,10 +144,11 @@ You can interact with the API and test its endpoints by visiting:
 - `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
 - `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
 - `DEL /delete_model/`: Delete the local files of a previously mounted model based on the model name
+- `GET /list_models/`: Retrieve a list of all downloaded models from the `HUGGINGFACE_CACHE_DIR` directory, including their names and types.
 - `POST /translate/`: Translate input text using the mounted translation model.
 - `POST /generate/`: Generate text based on the input prompt using the mounted text generation model..
 
-## Notes
+### Notes
 
 Ensure to monitor download progress through the associated API endpoints and handle errors according to the status returned.
 
