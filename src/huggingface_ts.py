@@ -104,6 +104,7 @@ is_downloading = False
 download_progress = []
 download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
+port = os.getenv("PORT", "8001")  # Default to 8001 if PORT is not set
 
 @app.post("/download_model/", 
           summary="Download a Model",
@@ -351,4 +352,4 @@ def filter_unwanted_files(files):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=int(port))

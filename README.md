@@ -154,18 +154,18 @@ You have two options for running the Docker image based on your environment.
 
 #### 1. Running the Docker Image on a Server
 
-When running the Docker image on a server, set the environment variable `HUGGINGFACE_CACHE_DIR` to specify the path in the Docker container. Execute the following command:
+When running the Docker image on a server, set the environment variables for both the cache directory `HUGGINGFACE_CACHE_DIR` and port. Execute the following command:
 
 ```bash
-docker run -d -p 8001:8001 -e HUGGINGFACE_CACHE_DIR=/app/model_cache huggingface_ts
+docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_CACHE_DIR=/app/model_cache -e PORT=8001 huggingface_ts
 ```
 
 #### 2. Running the Docker Image Locally
 
-If you are running the Docker image locally, use the following command to mount the `C:/HuggingFace/model_cache` directory from your host to the `/app/model_cache` directory inside the container. This allows the application to access and store downloaded models locally:
+If you are running the Docker image locally, use the following command to mount the cache directory `C:/HuggingFace/model_cache` and specify the port from your host to the `/app/model_cache` directory inside the container. This allows the application to access and store downloaded models locally:
 
 ```bash
-docker run -d -p 8001:8001 -e HUGGINGFACE_CACHE_DIR=/app/model_cache -v C:/HuggingFace/model_cache:/app/model_cache huggingface_ts
+docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_CACHE_DIR=/app/model_cache -e PORT=8001 -v C:/HuggingFace/model_cache:/app/model_cache huggingface_ts
 ```
 
 ### View Running Containers
