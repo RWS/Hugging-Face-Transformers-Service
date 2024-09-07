@@ -2,7 +2,45 @@
 
 ## Overview
 
-This is a FastAPI application that enables users to download and mount Hugging Face models for translation tasks.
+This is a FastAPI application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The service allows users to **download and mount** models locally, making it possible to run model inference without requiring an internet connection once the models are downloaded.
+
+### Key Features
+
+- **Model Management**: Users can easily download, mount, unmount, and delete Hugging Face models. Once a model is downloaded and mounted, it is accessible for inference locally, allowing for fast and efficient processing without repeated downloads.
+
+- **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages seamlessly. Users can specify source and target languages to customize their translation tasks.
+
+- **Text Generation**: Beyond translation, the application also supports advanced text generation tasks. Users can leverage models to generate contextual text based on provided prompts, ideal for applications such as chatbots, storytelling, or any scenario that requires dynamic text generation.
+
+- **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.
+
+- **Streaming Progress Updates**: For long-running operations such as downloading models, the application provides real-time progress updates, allowing users to monitor the status of their downloads.
+
+<!-- - **Metrics and Monitoring**: Integrates with Prometheus and Grafana for monitoring application performance and resource utilization, ensuring that the application runs smoothly and efficiently. -->
+
+By combining the power of Hugging Face's state-of-the-art models with the ease of FastAPI, this application empowers users to enhance their applications with robust NLP capabilities directly from their local environment.
+
+### Supported Model Types
+
+The following model types are supported, allowing users to leverage state-of-the-art machine learning capabilities for various natural language processing tasks:
+
+```python
+SUPPORTED_MODEL_TYPES = {
+    'translation': AutoModelForSeq2SeqLM,
+    'text2text-generation': AutoModelForSeq2SeqLM,
+    'text-generation': AutoModelForCausalLM,
+}
+```
+
+**Model Type Descriptions:**
+
+- **Translation**: Utilizes `AutoModelForSeq2SeqLM`, enabling users to perform translations between multiple languages seamlessly.
+
+- **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
+
+- **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
+
+-
 
 ## Setup Instructions
 
@@ -53,12 +91,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 ### Step 5: Configure Environment Variables
 
-Open the `.env` file located at the project's root directory and set your API Token to connect to Hugging Face and the cache directory for models, if neccessary:
+To connect to Hugging Face and manage model caching, you'll need to set up your environment variables.
+
+1. Locate the `.env` file in the root directory of the project. If it doesn't exist, you can create one.
+2. Open the `.env` file and add (or update) the following lines:
 
 ```plaintext
+# Directory where Hugging Face models will be cached
 HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
+
+# Your Hugging Face API token for authentication
 HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
 ```
+
+**Variable Descriptions**:
+
+- `HUGGINGFACE_CACHE_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
+- `HUGGINGFACE_TOKEN`: Replace `Your_Hugging_Face_API_Token` with your actual Hugging Face API token. You can obtain this token from your Hugging Face account settings.
+
+Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively.
 
 ### Step 6: Start the FastAPI Server
 
