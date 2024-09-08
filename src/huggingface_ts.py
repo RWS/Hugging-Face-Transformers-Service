@@ -35,50 +35,70 @@ SUPPORTED_MODEL_TYPES = {
 
 
 class TranslationRequest(BaseModel):
-    text: str = Field(default="Hello, how are you?", description="The source content that should be translated")
+    text: str = Field(default="The cat is on the table.", description="The source content that should be translated")
     
     class Config:
-        schema_extra = {
+        protected_namespaces = ()  
+        json_schema_extra  = {
             "example": {
-                "text": "Hello, how are you?"
+                "text": "The cat is on the table."
             }
         }
 
 class TextGenerationRequest(BaseModel):
-    prompt: list = Field(default="[{\"role\": \"system\",\"content\": \"you are a helpful translator\"},{\"role\": \"user\",\"content\": \"translate this from English to Italian: The cat is on the table.\"}]", description="The User Prompt comprises of custom instructions provided by the user, detailing the specific requirements for translation.")
-    max_tokens: int = Field(default=500, description="The maximum number of tokens to generate.")
+    prompt: List[Dict[str, str]] = Field(
+        default=[
+            {"role": "system", "content": "you are a helpful translator"},
+            {"role": "user", "content": "translate this from English to Italian: The cat is on the table."}
+        ],
+        description="The User Prompt comprises of custom instructions provided by the user, detailing the specific requirements for translation."
+    )
+    max_tokens: int = Field(default=250, description="The maximum number of tokens to generate.")
     temperature: float = Field(default=1.0, description="Sampling temperature for generation, where higher values lead to more random outputs.")
     
     class Config:
-        schema_extra = {
+        protected_namespaces = ()  
+        json_schema_extra = {
             "example": {
-                "prompt": "Translate the following from 'en-US' to 'it-IT': \nOnce upon a time in a land far away",
-                "max_tokens": 500,
+                "prompt": [
+                    {"role": "system", "content": "you are a helpful translator"},
+                    {"role": "user", "content": "translate this from English to Italian: The cat is on the table."}
+                ],
+                "max_tokens": 100,
                 "temperature": 1.0
             }
         }
 
 class MountModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-    model_type: str = Field(default="translation", description="Type of model to mount. Supported values: 'translation', 'text2text-generation', 'text-generation'.")
+    model_type: str = Field(default="translation", description="Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation'.")
     source_language: Optional[str] = Field(default="eng_Latn", description="[Optional] Language code for the source language (e.g., 'eng_Latn' for English).")
     target_language: Optional[str] = Field(default="ita_Latn", description="[Optional] Language code for the target language (e.g., 'ita_Latn' for Italian).")
 
     class Config:
-        schema_extra = {
+        protected_namespaces = ()  
+        json_schema_extra  = {
             "example": {
                 "model_name": "facebook/nllb-200-distilled-600M",
-                "model_type": "translation | text2text-generation | text-generation",
+                "model_type": "translation",
                 "source_language": "eng_Latn",
                 "target_language": "ita_Latn"
             }
         }
 
+
+class TextGenerationResponse(BaseModel):
+    generated_text: str = Field(
+        description="The generated text from the model based on the provided prompt.",
+        example="Il gatto è sul tavolo."  # Example translation output
+    )
+
 class ModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
 
     class Config:
-        schema_extra = {
+        protected_namespaces = ()  
+        json_schema_extra  = {
             "example": {
                 "model_name": "facebook/nllb-200-distilled-600M"
             }
@@ -97,33 +117,39 @@ download_directory = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache").stri
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN").strip()
 
 
-# Define a new endpoint to list downloaded models
-@app.get("/list_models/", response_model=List[Dict[str, str]], summary="List downloaded models")
+@app.get("/list_models/", 
+          response_model=List[Dict[str, str]], 
+          summary="List downloaded models", 
+          response_description="A list of models available in the cache.",
+          responses={200: {"content": {"application/json": {"example": [{"model_name": "facebook/nllb-200-distilled-600M", "model_type": "translation", "model_size_bytes": "3.45 GB"}]}}}})
 async def list_models() -> List[Dict[str, str]]:
-    """List all downloaded models along with their types."""
+    """List all downloaded models along with their types and sizes."""
     model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
     models_info = []
-
     try:
         # List directories in the cache directory to find downloaded models
         model_dirs = [d for d in os.listdir(model_cache_dir) if os.path.isdir(os.path.join(model_cache_dir, d))]
-
         for model_dir in model_dirs:
             # Skip any directories that start with '.' or are named '.locks'
             if model_dir.startswith('.') or model_dir == '.locks':
                 continue
-
-            model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name 
-            model_type = infer_model_type(model_dir) 
-
+            
+            model_path = os.path.join(model_cache_dir, model_dir)
+            model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name
+            model_type = infer_model_type(model_dir)
+            model_size = get_directory_size(model_path)  # Get the total size of the model directory
+            
+            # Format the model size as a human-readable string
+            formatted_size = format_size(model_size)
+            
             models_info.append({
                 "model_name": model_name,
-                "model_type": model_type
+                "model_type": model_type,
+                "model_size_bytes": formatted_size  # Now it is a string
             })
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
-    
+   
     return models_info
 
 @app.post("/download_model/", 
@@ -159,7 +185,7 @@ async def download_model(request: ModelRequest) -> StreamingResponse:
             filtered_files = filter_unwanted_files(files)
             total_files = len(filtered_files)
             download_progress.append({"message": "Download started."})
-            
+          
             for index, file in enumerate(filtered_files):
                 try:
                     file_path = hf_hub_download(repo_id=model_name, 
@@ -198,10 +224,13 @@ async def get_progress() -> JSONResponse:
     
     return JSONResponse(content={"progress": download_progress})
 
-@app.post("/mount_model/",
-          summary="Mount a Model",
-          description="Mount the specified model and setup the appropriate pipeline.\n The 'source_language' and 'target_language' parameters are optional for models of type 'translation'")
+@app.post("/mount_model/", 
+          summary="Mount a Model", 
+          description="Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text2text-generation', 'text-generation'", 
+          response_model=dict,
+          responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully."}}}}})
 async def mount_model(request: MountModelRequest) -> dict:
+    """Mount the specified model."""
     global current_model, tokenizer, translator, text_generator, current_model_type
     model_name = request.model_name
     requested_model_type = request.model_type
@@ -257,9 +286,11 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
 
-@app.post("/unmount_model/",
-          summary="Unmount the Current Model",
-          description="Unmount the currently mounted model to free up resources.")
+@app.post("/unmount_model/", 
+           summary="Unmount the Current Model", 
+           description="Unmount the currently mounted model to free up resources.",
+           response_model=dict,
+           responses={200: {"content": {"application/json": {"example": {"message": "Model unmounted successfully."}}}}})
 async def unmount_model() -> dict:
     """Unmounts the currently active model."""
     global tokenizer, current_model, current_model_type
@@ -270,10 +301,13 @@ async def unmount_model() -> dict:
     current_model, tokenizer, current_model_type = None, None, None
     return {"message": "Model unmounted successfully."}
 
-@app.delete("/delete_model/",
-          summary="Delete Local Model",
-          description="Delete the local files of a previously mounted model based on the model name.")
+@app.delete("/delete_model/", 
+             summary="Delete Local Model", 
+             description="Delete the local files of a previously mounted model based on the model name.", 
+             response_model=dict,
+             responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."}}}}})
 async def delete_model(request: ModelRequest) -> dict:
+    """Delete a previously mounted model."""
     global tokenizer, current_model, current_model_type
     model_name = request.model_name
     
@@ -299,16 +333,15 @@ async def delete_model(request: ModelRequest) -> dict:
 # Translation API Endpoint
 @app.post("/translate/",
           summary="Translate Text",
-          description="Translate input text using the mounted translation model.")
+          description="Translate input text using the mounted translation model.",
+          response_model=TextGenerationResponse)
 async def translate(translation_request: TranslationRequest) -> dict:
     global translator
     if not translator:
         raise HTTPException(status_code=400, detail="No translation model is currently mounted.")
     
-  # Perform translation directly with the input text
     translated_text = translator(translation_request.text)
 
-    # Extract the translated text from the response
     if isinstance(translated_text, list):
         translated_text = translated_text[0]['translation_text']
     
@@ -316,59 +349,27 @@ async def translate(translation_request: TranslationRequest) -> dict:
 
 @app.post("/generate/",
           summary="Generate Text",
-          description="Generate text based on the input prompt using the mounted text generation model.")
+          description="Generate text based on the input prompt using the mounted text generation model.",
+          response_model=TextGenerationResponse)
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
-    global text_generator, tokenizer, current_model, current_model_type
-
     if not text_generator:
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
-    
-    # Construct the conversation format expected by the model
-    conversation = []
 
-    # Add user/content messages
-    for msg in text_generation_request.prompt:
-        conversation.append({"role": msg['role'], "content": msg['content']})
+    # Extracting messages directly from the request prompt
+    messages = text_generation_request.prompt
 
+    try:
+        generated_results = text_generator(messages, 
+                                           max_length=text_generation_request.max_tokens, 
+                                           temperature=text_generation_request.temperature)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
 
-    # Generating the input IDs as in the example
-    input_ids = tokenizer.apply_chat_template(conversation, add_generation_prompt=True, return_tensors="pt").to(current_model.device)
+    if isinstance(generated_results, list):
+        generated_text = generated_results[0]['generated_text']
+    else:
+        generated_text = generated_results.get('generated_text', '')
 
-    attention_mask = (input_ids != tokenizer.pad_token_id).long()  # This creates a mask indicating non-padding tokens
-
-    # Prepare generation parameters (you may need to adjust these)
-    generate_kwargs = {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,  # Add the attention mask here
-        "max_new_tokens": text_generation_request.max_tokens,
-        "temperature": text_generation_request.temperature,
-        # "do_sample": True,  # Change to True to enable sampling
-        #"top_p": 0.95,
-        #"top_k": 50,
-        "eos_token_id": tokenizer.eos_token_id  # Adjust based on your model specifics
-    }
-
-    # Generate the text
-    with torch.no_grad():
-        generated_text = current_model.generate(**generate_kwargs)
-
-    # Extract the generated text
-    generated_text = tokenizer.decode(generated_text[0], skip_special_tokens=True)
-
-    # Format the conversation into a single string expected by the model
-    # formatted_prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation])
-
-    # # Perform text generation directly with the prompt
-    # generated_text = text_generator(
-    #     formatted_prompt,
-    #     max_length=text_generation_request.max_tokens,
-    #     temperature=text_generation_request.temperature
-    # )
-
-    # # Extract the generated text from the response
-    # if isinstance(generated_text, list):
-    #     generated_text = generated_text[0]['generated_text']
-    
     return {"generated_text": generated_text}
 
 
@@ -399,7 +400,7 @@ def move_snapshot_files(model_name, download_directory):
 
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
-    unwanted_files = {'.gitattributes'}
+    unwanted_files = {'.gitattributes', 'USE_POLICY.md'}
     return [file for file in files if file.rfilename not in unwanted_files]
 
 def infer_model_type(model_dir: str) -> str:
@@ -462,6 +463,27 @@ def infer_model_type(model_dir: str) -> str:
             # Expand with other mappings based on model_type as needed.
 
     return "unknown"  # Fallback if type cannot be determined
+
+def get_directory_size(directory: str) -> int:
+    """Calculate the total size of the directory."""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.exists(fp):  # Check if the file exists
+                total_size += os.path.getsize(fp)
+    return total_size
+
+def format_size(size_bytes: int) -> str:
+    """Return a human-readable string representation of size in bytes."""
+    if size_bytes == 0:
+        return "0 Bytes"
+    size_units = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    index = 0
+    while size_bytes >= 1024 and index < len(size_units) - 1:
+        size_bytes /= 1024
+        index += 1
+    return f"{size_bytes:.2f} {size_units[index]}"
     
 if __name__ == "__main__":
     import uvicorn

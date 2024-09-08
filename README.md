@@ -59,7 +59,6 @@ If not installed, download Python from the [official website](https://www.python
 
 ```bash
 git clone https://github.com/RWS/Hugging-Face-Transformers-Service.git
-cd Hugging-Face-Transformers-Service
 ```
 
 ### Step 3: Create a Virtual Environment
@@ -67,6 +66,7 @@ cd Hugging-Face-Transformers-Service
 Navigate to your project root in the terminal and create a virtual environment:
 
 ```bash
+cd Hugging-Face-Transformers-Service
 python -m venv venv
 ```
 
@@ -111,7 +111,8 @@ HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
 HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
 
 # Port to run the FastAPI application
-PORT=8001  # Adjust this to change the application's running port
+# Adjust this to change the application's running port
+PORT=8001
 ```
 
 **Variable Descriptions**:
