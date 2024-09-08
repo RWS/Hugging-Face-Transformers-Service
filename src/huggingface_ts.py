@@ -93,6 +93,12 @@ class TextGenerationResponse(BaseModel):
         example="Il gatto è sul tavolo."  # Example translation output
     )
 
+class TranslationResponse(BaseModel):
+    translated_text: str = Field(
+        description="The generated text from the model based on the provided prompt.",
+        example="Il gatto è sul tavolo."  # Example translation output
+    )    
+
 class ModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
 
@@ -334,7 +340,7 @@ async def delete_model(request: ModelRequest) -> dict:
 @app.post("/translate/",
           summary="Translate Text",
           description="Translate input text using the mounted translation model.",
-          response_model=TextGenerationResponse)
+          response_model=TranslationResponse)
 async def translate(translation_request: TranslationRequest) -> dict:
     global translator
     if not translator:
@@ -345,7 +351,7 @@ async def translate(translation_request: TranslationRequest) -> dict:
     if isinstance(translated_text, list):
         translated_text = translated_text[0]['translation_text']
     
-    return {"translated_text": translated_text}
+    return TranslationResponse(translated_text=translated_text)
 
 @app.post("/generate/",
           summary="Generate Text",
@@ -362,15 +368,49 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
         generated_results = text_generator(messages, 
                                            max_length=text_generation_request.max_tokens, 
                                            temperature=text_generation_request.temperature)
+        # Log the generated results for debugging
+        print("Generated results:", generated_results)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
 
-    if isinstance(generated_results, list):
-        generated_text = generated_results[0]['generated_text']
-    else:
-        generated_text = generated_results.get('generated_text', '')
+    generated_text = ''
 
-    return {"generated_text": generated_text}
+    if isinstance(generated_results, list) and len(generated_results) > 0:
+        first_result = generated_results[0]
+        
+        if isinstance(first_result, dict) and 'generated_text' in first_result:
+            # Extract the list associated with 'generated_text'
+            generated_text_list = first_result['generated_text']
+            if isinstance(generated_text_list, list):
+                # Find the last response where role is 'assistant'
+                assistant_responses = [entry for entry in generated_text_list if entry.get('role') == 'assistant']
+                
+                if assistant_responses:
+                    # Get the last assistant's response
+                    last_assistant_response = assistant_responses[-1].get('content', '')
+                    generated_text = last_assistant_response
+                else:
+                    raise HTTPException(status_code=500, detail="No response found with role 'assistant'.")
+            else:
+                raise HTTPException(status_code=500, detail="'generated_text' key does not contain a valid list.")
+        else:
+            raise HTTPException(status_code=500, detail="Unexpected format for generated_results.")
+    else:
+        raise HTTPException(status_code=500, detail="Generated results list is empty or invalid.")
+
+    # Print the generated text for debugging
+    print('generated_text: ' + generated_text)
+
+    # Ensure that the produced text is a valid string
+    if not isinstance(generated_text, str):
+        raise HTTPException(status_code=500, detail="Generated text is not a valid string.")
+    
+    # If generated text is empty, handle it
+    if generated_text.strip() == "":
+        raise HTTPException(status_code=500, detail="Generated text is empty.")
+
+    return TextGenerationResponse(generated_text=generated_text)
 
 
 # Function to move snapshot files to the model path
