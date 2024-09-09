@@ -285,7 +285,6 @@ async def mount_model(request: MountModelRequest) -> dict:
     
 
     # Move model to GPU if available
-    print("attempt to load cuta")
     if torch.cuda.is_available():
         current_model.to('cuda')
         print(f"Model '{model_name}' moved to GPU.")
@@ -353,6 +352,7 @@ async def translate(translation_request: TranslationRequest) -> dict:
     
     return TranslationResponse(translated_text=translated_text)
 
+
 @app.post("/generate/",
           summary="Generate Text",
           description="Generate text based on the input prompt using the mounted text generation model.",
@@ -360,57 +360,65 @@ async def translate(translation_request: TranslationRequest) -> dict:
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
     if not text_generator:
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
-
-    # Extracting messages directly from the request prompt
+    
     messages = text_generation_request.prompt
-
     try:
-        generated_results = text_generator(messages, 
-                                           max_length=text_generation_request.max_tokens, 
+        generated_results = text_generator(messages,
+                                           max_length=text_generation_request.max_tokens,
                                            temperature=text_generation_request.temperature)
-        # Log the generated results for debugging
+        
         print("Generated results:", generated_results)
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
-
+    
     generated_text = ''
-
+    
+    # Check various response formats
     if isinstance(generated_results, list) and len(generated_results) > 0:
         first_result = generated_results[0]
-        
-        if isinstance(first_result, dict) and 'generated_text' in first_result:
-            # Extract the list associated with 'generated_text'
-            generated_text_list = first_result['generated_text']
-            if isinstance(generated_text_list, list):
-                # Find the last response where role is 'assistant'
-                assistant_responses = [entry for entry in generated_text_list if entry.get('role') == 'assistant']
-                
-                if assistant_responses:
-                    # Get the last assistant's response
-                    last_assistant_response = assistant_responses[-1].get('content', '')
-                    generated_text = last_assistant_response
-                else:
-                    raise HTTPException(status_code=500, detail="No response found with role 'assistant'.")
+
+        # Check for known formats
+        if isinstance(first_result, dict):
+            # First, check for assistant responses
+            assistant_response = extract_assistant_response(first_result)
+            if assistant_response:
+                generated_text = assistant_response
+            elif 'generated_text' in first_result:
+                # If no assistant response was found, check for other definitions
+                generated_text = str(first_result['generated_text'])  # Fallback to conversion if needed
+            elif 'choices' in first_result:
+                # OpenAI format (example)
+                generated_text = first_result['choices'][0]['text']
             else:
-                raise HTTPException(status_code=500, detail="'generated_text' key does not contain a valid list.")
-        else:
-            raise HTTPException(status_code=500, detail="Unexpected format for generated_results.")
-    else:
-        raise HTTPException(status_code=500, detail="Generated results list is empty or invalid.")
+                generated_text = str(first_result)  # Fallback case for unexpected format
 
-    # Print the generated text for debugging
-    print('generated_text: ' + generated_text)
-
-    # Ensure that the produced text is a valid string
-    if not isinstance(generated_text, str):
-        raise HTTPException(status_code=500, detail="Generated text is not a valid string.")
+    # General case if generated_results is not as expected
+    if not generated_text:
+        generated_text = str(generated_results) 
     
-    # If generated text is empty, handle it
-    if generated_text.strip() == "":
-        raise HTTPException(status_code=500, detail="Generated text is empty.")
+    if not isinstance(generated_text, str) or generated_text.strip() == "":
+        generated_text = "Generated text is not valid or is empty." 
 
     return TextGenerationResponse(generated_text=generated_text)
+
+
+def extract_assistant_response(response):
+    """
+    Function to extract the most recent assistant response from a structured output.
+    Assumes the structure contains a list where each entry may have a 'role' and 'content'.
+    """
+    # Assuming the response has a 'generated_text' key referring to a list of responses
+    if isinstance(response, dict) and 'generated_text' in response:
+        generated_text_list = response['generated_text']
+        
+        if isinstance(generated_text_list, list):
+            # Filter entries with role 'assistant'
+            assistant_responses = [entry for entry in generated_text_list if entry.get('role') == 'assistant']
+            if assistant_responses:
+                # Return the content of the last assistant's response
+                return assistant_responses[-1].get('content', '')
+    
+    return None
 
 
 # Function to move snapshot files to the model path
