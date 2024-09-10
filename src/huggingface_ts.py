@@ -13,6 +13,7 @@ import warnings
 import shutil
 from typing import Optional, List, Dict 
 import re
+from llama_cpp import Llama
 
 
 # Load environment variables
@@ -27,10 +28,11 @@ app = FastAPI(
 )
 
 # Supported model mappings
-SUPPORTED_MODEL_TYPES = {
+SUPPORTED_MODEL_TYPES = {    
     'translation': AutoModelForSeq2SeqLM,
     'text2text-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
+    'llama': Llama
 }
 
 
@@ -55,6 +57,7 @@ class TextGenerationRequest(BaseModel):
     )
     max_tokens: int = Field(default=250, description="The maximum number of tokens to generate.")
     temperature: float = Field(default=1.0, description="Sampling temperature for generation, where higher values lead to more random outputs.")
+    result_type: str = Field(default='assistant', description="Indicates the response type: 'raw' for full response or 'assistant' for just the assistant's message.")
     
     class Config:
         protected_namespaces = ()  
@@ -65,13 +68,14 @@ class TextGenerationRequest(BaseModel):
                     {"role": "user", "content": "translate this from English to Italian: The cat is on the table."}
                 ],
                 "max_tokens": 100,
-                "temperature": 1.0
+                "temperature": 1.0,
+                "result_type" : "assistant"
             }
         }
 
 class MountModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-    model_type: str = Field(default="translation", description="Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation'.")
+    model_type: str = Field(default="translation", description="Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama'.")
     source_language: Optional[str] = Field(default="eng_Latn", description="[Optional] Language code for the source language (e.g., 'eng_Latn' for English).")
     target_language: Optional[str] = Field(default="ita_Latn", description="[Optional] Language code for the target language (e.g., 'ita_Latn' for Italian).")
 
@@ -127,7 +131,7 @@ huggingface_token = os.getenv("HUGGINGFACE_TOKEN").strip()
           response_model=List[Dict[str, str]], 
           summary="List downloaded models", 
           response_description="A list of models available in the cache.",
-          responses={200: {"content": {"application/json": {"example": [{"model_name": "facebook/nllb-200-distilled-600M", "model_type": "translation", "model_size_bytes": "3.45 GB"}]}}}})
+          responses={200: {"content": {"application/json": {"example": [{"model_name": "microsoft/Phi-3.5-mini-instruct", "model_type": "text-generation", "model_size_bytes": "7.12 GB"}]}}}})
 async def list_models() -> List[Dict[str, str]]:
     """List all downloaded models along with their types and sizes."""
     model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
@@ -230,9 +234,10 @@ async def get_progress() -> JSONResponse:
     
     return JSONResponse(content={"progress": download_progress})
 
+
 @app.post("/mount_model/", 
           summary="Mount a Model", 
-          description="Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text2text-generation', 'text-generation'", 
+          description="Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama", 
           response_model=dict,
           responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully."}}}}})
 async def mount_model(request: MountModelRequest) -> dict:
@@ -240,13 +245,13 @@ async def mount_model(request: MountModelRequest) -> dict:
     global current_model, tokenizer, translator, text_generator, current_model_type
     model_name = request.model_name
     requested_model_type = request.model_type
-
     model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
 
     # Load model and tokenizer based on model type
-    if requested_model_type in ("translation","text2text-generation"):
+    if requested_model_type in ("translation", "text2text-generation"):
+    
         current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)
         tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
 
@@ -268,7 +273,8 @@ async def mount_model(request: MountModelRequest) -> dict:
                 tokenizer=tokenizer
             )
     
-    elif requested_model_type == "text-generation":       
+    elif requested_model_type == "text-generation":
+
         current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)        
         tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
 
@@ -279,11 +285,23 @@ async def mount_model(request: MountModelRequest) -> dict:
             model=current_model,
             tokenizer=tokenizer,
         )
-
+    elif requested_model_type == "llama":
+        # Dynamically find the first .gguf file in the model_path
+        gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+        if not gguf_files:
+            raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
+        
+        # Use the first found .gguf file
+        filename = os.path.basename(gguf_files[0]) 
+        current_model = Llama.from_pretrained(
+            repo_id=model_name,  
+            filename=filename,    
+            local_dir=model_path
+        )
+        current_model_type = requested_model_type
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
     
-
     # Move model to GPU if available
     if torch.cuda.is_available():
         current_model.to('cuda')
@@ -356,50 +374,56 @@ async def translate(translation_request: TranslationRequest) -> dict:
 @app.post("/generate/",
           summary="Generate Text",
           description="Generate text based on the input prompt using the mounted text generation model.",
-          response_model=TextGenerationResponse)
+          response_model=dict)  # Change response model to dict
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
-    if not text_generator:
+    global text_generator, current_model_type, current_model
+
+    print("current_model_type: " + current_model_type)
+    if not text_generator and current_model_type != "llama":
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
-    
+
     messages = text_generation_request.prompt
     try:
-        generated_results = text_generator(messages,
-                                           max_length=text_generation_request.max_tokens,
-                                           temperature=text_generation_request.temperature)
-        
+        if current_model_type == "llama":
+            generated_results = current_model.create_chat_completion(
+                messages=messages,
+                max_tokens=text_generation_request.max_tokens,
+                temperature=text_generation_request.temperature
+            )
+        else:
+            generated_results = text_generator(
+                messages,
+                max_length=text_generation_request.max_tokens,
+                temperature=text_generation_request.temperature
+            )
+
         print("Generated results:", generated_results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
-    
-    generated_text = ''
-    
-    # Check various response formats
-    if isinstance(generated_results, list) and len(generated_results) > 0:
-        first_result = generated_results[0]
 
-        # Check for known formats
-        if isinstance(first_result, dict):
-            # First, check for assistant responses
-            assistant_response = extract_assistant_response(first_result)
-            if assistant_response:
-                generated_text = assistant_response
-            elif 'generated_text' in first_result:
-                # If no assistant response was found, check for other definitions
-                generated_text = str(first_result['generated_text'])  # Fallback to conversion if needed
-            elif 'choices' in first_result:
-                # OpenAI format (example)
-                generated_text = first_result['choices'][0]['text']
-            else:
-                generated_text = str(first_result)  # Fallback case for unexpected format
+    # Determine the result_type
+    result_type = text_generation_request.result_type or 'raw'  # Default to 'raw' if None or empty
 
-    # General case if generated_results is not as expected
-    if not generated_text:
-        generated_text = str(generated_results) 
-    
-    if not isinstance(generated_text, str) or generated_text.strip() == "":
-        generated_text = "Generated text is not valid or is empty." 
-
-    return TextGenerationResponse(generated_text=generated_text)
+    if result_type == 'raw':
+        # Return the raw response
+        return generated_results
+    elif result_type == 'assistant':
+        # Extract the assistant's response
+        if current_model_type == "llama":
+            assistant_response = generated_results['choices'][0]['message']['content']
+        else:
+            # Handle other models if needed
+            if isinstance(generated_results, list) and len(generated_results) > 0:
+                first_result = generated_results[0]
+                if isinstance(first_result, dict) and 'generated_text' in first_result:
+                    assistant_response = first_result['generated_text']
+                elif isinstance(first_result, dict) and 'choices' in first_result:
+                    assistant_response = first_result['choices'][0]['text']
+                else:
+                    assistant_response = str(first_result)
+        return {"assistant_response": assistant_response}  # Return only the assistant response
+    else:
+        raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
 
 
 def extract_assistant_response(response):
@@ -510,6 +534,11 @@ def infer_model_type(model_dir: str) -> str:
                 return "text-generation"
             # Expand with other mappings based on model_type as needed.
 
+    # Final check: Look for llama compatible files with the *.gguf extension
+    gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+    if gguf_files:
+        return "llama"
+    
     return "unknown"  # Fallback if type cannot be determined
 
 def get_directory_size(directory: str) -> int:

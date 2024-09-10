@@ -50,3 +50,4 @@ package.nls.*.json
 l10n/
 python-env-tools/**
 venv/**
+ts-venv/**

@@ -29,6 +29,7 @@ SUPPORTED_MODEL_TYPES = {
     'translation': AutoModelForSeq2SeqLM,
     'text2text-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
+    'llama': Llama
 }
 ```
 
@@ -39,6 +40,8 @@ SUPPORTED_MODEL_TYPES = {
 - **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
 
 - **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
+
+- **Llama**: Implements the `Llama` model from the `llama_cpp` library, designed for conversational tasks and assistant-like interactions. This model excels in generating context-specific responses based on provided messages, making it suitable for chat applications and interactive content generation.
 
 <br>
 
@@ -171,7 +174,7 @@ You have two options for running the Docker image based on your environment.
 
 #### 1. Running the Docker Image on a Server
 
-When running the Docker image on a server, set the environment variables for both the cache directory `HUGGINGFACE_CACHE_DIR` and port. Execute the following command:
+When running the Docker image on a server, set the environment variables for both the cache directory `HUGGINGFACE_CACHE_DIR` and `PORT`. Execute the following command:
 
 ```bash
 docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_CACHE_DIR=/app/model_cache -e PORT=8001 huggingface_ts
