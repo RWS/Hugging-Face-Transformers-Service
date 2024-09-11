@@ -586,10 +586,10 @@ def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
     unwanted_files = {'.gitattributes', 'USE_POLICY.md'}
     
-    # exclude files from sub-folders
+    # Check for unwanted filenames and exclude those containing '/' or '\'
     return [
         file for file in files 
-        if file not in unwanted_files and '/' not in file and '\\' not in file
+        if file.rfilename not in unwanted_files and '/' not in file.rfilename and '\\' not in file.rfilename
     ]
 
 def infer_model_type(model_dir: str) -> str:
