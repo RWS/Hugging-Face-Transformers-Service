@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, pipeline
-from huggingface_hub import hf_hub_download, model_info
+from transformers import AutoModel, AutoConfig, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, pipeline
+from huggingface_hub import hf_hub_download, model_info, HfApi
 import torch
 import os
 import glob
@@ -11,7 +11,7 @@ import asyncio
 from dotenv import load_dotenv
 import warnings
 import shutil
-from typing import Optional, List, Dict 
+from typing import Optional, List, Dict, Any
 import re
 from llama_cpp import Llama
 
@@ -26,11 +26,11 @@ app = FastAPI(
     description="This is a FastAPI application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The service allows users to **download and mount** models locally, making it possible to run model inference without requiring an internet connection once the models are downloaded.",
     version="1.0.0",
 )
+api = HfApi()
 
 # Supported model mappings
-SUPPORTED_MODEL_TYPES = {    
-    'translation': AutoModelForSeq2SeqLM,
-    'text2text-generation': AutoModelForSeq2SeqLM,
+SUPPORTED_MODEL_TYPES = {     
+    'sequence-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
     'llama': Llama
 }
@@ -90,13 +90,6 @@ class MountModelRequest(BaseModel):
             }
         }
 
-
-class TextGenerationResponse(BaseModel):
-    generated_text: str = Field(
-        description="The generated text from the model based on the provided prompt.",
-        example="Il gatto è sul tavolo."  # Example translation output
-    )
-
 class TranslationResponse(BaseModel):
     translated_text: str = Field(
         description="The generated text from the model based on the provided prompt.",
@@ -114,12 +107,25 @@ class ModelRequest(BaseModel):
             }
         }
 
+class ModelInfo(BaseModel):
+    model_name: str
+    model_type: str
+    model_mounted: bool  # Boolean type
+    model_size_bytes: str
+
 # Global variables for tracking state
-current_model = None
-current_model_type = None  
-tokenizer = None
-translator = None  # For translation models
-text_generator = None  # For text generation models
+translation_model_name = None
+translation_model = None
+translation_model_type = None 
+translation_tokenizer = None
+translator_pipeline = None  # For translation models
+
+text_generator_model_name = None
+text_generator_model = None
+text_generator_model_type = None 
+text_generator_tokenizer = None
+text_generator_pipeline = None  # For text generation models
+
 is_downloading = False
 download_progress = []
 port = os.getenv("PORT", "8001").strip()  # Ensure extra whitespace is removed
@@ -128,11 +134,13 @@ huggingface_token = os.getenv("HUGGINGFACE_TOKEN").strip()
 
 
 @app.get("/list_models/", 
-          response_model=List[Dict[str, str]], 
+          response_model=List[ModelInfo], 
           summary="List downloaded models", 
           response_description="A list of models available in the cache.",
           responses={200: {"content": {"application/json": {"example": [{"model_name": "microsoft/Phi-3.5-mini-instruct", "model_type": "text-generation", "model_size_bytes": "7.12 GB"}]}}}})
 async def list_models() -> List[Dict[str, str]]:
+    global text_generator_model_name, text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline, \
+       translation_model_name, translation_model, translation_tokenizer, translation_model_type, translator_pipeline
     """List all downloaded models along with their types and sizes."""
     model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
     models_info = []
@@ -151,10 +159,17 @@ async def list_models() -> List[Dict[str, str]]:
             
             # Format the model size as a human-readable string
             formatted_size = format_size(model_size)
-            
+
+            is_mounted = False
+            if (text_generator_model and model_name == text_generator_model_name):
+                is_mounted = True
+            elif (translation_model and model_name == translation_model_name):
+                is_mounted = True
+
             models_info.append({
                 "model_name": model_name,
                 "model_type": model_type,
+                "model_mounted" : is_mounted,
                 "model_size_bytes": formatted_size  # Now it is a string
             })
     except Exception as e:
@@ -242,48 +257,52 @@ async def get_progress() -> JSONResponse:
           responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully."}}}}})
 async def mount_model(request: MountModelRequest) -> dict:
     """Mount the specified model."""
-    global current_model, tokenizer, translator, text_generator, current_model_type
+    global text_generator_model_name, text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline, \
+       translation_model_name, translation_model, translation_tokenizer, translation_model_type, translator_pipeline
+    
     model_name = request.model_name
     requested_model_type = request.model_type
     model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
+    
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
 
     # Load model and tokenizer based on model type
-    if requested_model_type in ("translation", "text2text-generation"):
+    if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
     
-        current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)
-        tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
+        translation_model_name = model_name
+        translation_model = get_model_type(requested_model_type).from_pretrained(model_path, token=huggingface_token)
+        translation_tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
+        translation_model_type = requested_model_type
 
-        current_model_type = requested_model_type
         # Setup the translation pipeline with language parameters if provided
         if request.source_language and request.target_language:
-            translator = pipeline(
+            translator_pipeline = pipeline(
                 requested_model_type,
-                model=current_model,
-                tokenizer=tokenizer,
+                model=translation_model,
+                tokenizer=translation_tokenizer,
                 src_lang=request.source_language,
                 tgt_lang=request.target_language
             )
         else:
             # Setup pipeline without language parameters
-            translator = pipeline(
+            translator_pipeline = pipeline(
                 requested_model_type,
-                model=current_model,
-                tokenizer=tokenizer
+                model=translation_model,
+                tokenizer=translation_tokenizer
             )
     
     elif requested_model_type == "text-generation":
 
-        current_model = SUPPORTED_MODEL_TYPES[requested_model_type].from_pretrained(model_path, token=huggingface_token)        
-        tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
+        text_generator_model_name = model_name
+        text_generator_model = get_model_type(requested_model_type).from_pretrained(model_path, token=huggingface_token)        
+        text_generator_tokenizer = AutoTokenizer.from_pretrained(model_path, token=huggingface_token)
+        text_generator_model_type = requested_model_type
 
-        current_model_type = requested_model_type
-
-        text_generator = pipeline(
+        text_generator_pipeline = pipeline(
             requested_model_type,
-            model=current_model,
-            tokenizer=tokenizer,
+            model=text_generator_model,
+            tokenizer=text_generator_tokenizer,
         )
     elif requested_model_type == "llama":
         # Dynamically find the first .gguf file in the model_path
@@ -293,18 +312,22 @@ async def mount_model(request: MountModelRequest) -> dict:
         
         # Use the first found .gguf file
         filename = os.path.basename(gguf_files[0]) 
-        current_model = Llama.from_pretrained(
+        text_generator_model = Llama.from_pretrained(
             repo_id=model_name,  
             filename=filename,    
             local_dir=model_path
         )
-        current_model_type = requested_model_type
+
+        text_generator_model_name = model_name
+        text_generator_pipeline = None
+        text_generator_tokenizer = None
+        text_generator_model_type = requested_model_type
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
     
     # Move model to GPU if available
     if torch.cuda.is_available():
-        current_model.to('cuda')
+        text_generator_model.to('cuda')
         print(f"Model '{model_name}' moved to GPU.")
 
     return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
@@ -314,15 +337,26 @@ async def mount_model(request: MountModelRequest) -> dict:
            description="Unmount the currently mounted model to free up resources.",
            response_model=dict,
            responses={200: {"content": {"application/json": {"example": {"message": "Model unmounted successfully."}}}}})
-async def unmount_model() -> dict:
+async def unmount_model(request: ModelRequest) -> dict:
     """Unmounts the currently active model."""
-    global tokenizer, current_model, current_model_type
+    global text_generator_model_name, text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline, \
+       translation_model_name, translation_model, translation_tokenizer, translation_model_type, translator_pipeline
 
-    if not current_model or not tokenizer:
+    model_name = request.model_name
+
+    if not text_generator_model and not translation_model:
         raise HTTPException(status_code=400, detail="No model is currently mounted.")
 
-    current_model, tokenizer, current_model_type = None, None, None
-    return {"message": "Model unmounted successfully."}
+    if (text_generator_model and model_name == text_generator_model_name):
+        # do someting
+        text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline = None, None, None, None        
+        return {"message": "Model '" + model_name + "' unmounted successfully."}
+    elif (translation_model and model_name == translation_model_name):
+        # do something
+        translation_model, translation_tokenizer, translation_model_type, translator_pipeline = None, None, None, None
+        return {"message": "Model '" + model_name + "' unmounted successfully."}
+
+    return {"message": "Model '" + model_name + "' is not mounted"}
 
 @app.delete("/delete_model/", 
              summary="Delete Local Model", 
@@ -331,7 +365,9 @@ async def unmount_model() -> dict:
              responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."}}}}})
 async def delete_model(request: ModelRequest) -> dict:
     """Delete a previously mounted model."""
-    global tokenizer, current_model, current_model_type
+    global text_generator_model_name, text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline, \
+       translation_model_name, translation_model, translation_tokenizer, translation_model_type, translator_pipeline
+    
     model_name = request.model_name
     
     # Construct the model path
@@ -341,9 +377,13 @@ async def delete_model(request: ModelRequest) -> dict:
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' does not exist at path '{model_path}'.")
 
-    # Unmount the model
-    if current_model or tokenizer:
-       current_model, tokenizer, current_model_type = None, None, None
+    if (text_generator_model and model_name == text_generator_model_name):
+        # do someting
+        text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline = None, None, None, None        
+    elif (translation_model and model_name == translation_model_name):
+        # do something
+        translation_model, translation_tokenizer, translation_model_type, translator_pipeline = None, None, None, None        
+        
        
     # Remove the model directory and its contents
     try:
@@ -359,39 +399,39 @@ async def delete_model(request: ModelRequest) -> dict:
           description="Translate input text using the mounted translation model.",
           response_model=TranslationResponse)
 async def translate(translation_request: TranslationRequest) -> dict:
-    global translator
-    if not translator:
+    global translator_pipeline
+
+    if not translator_pipeline:
         raise HTTPException(status_code=400, detail="No translation model is currently mounted.")
     
-    translated_text = translator(translation_request.text)
+    translated_text = translator_pipeline(translation_request.text)
 
     if isinstance(translated_text, list):
         translated_text = translated_text[0]['translation_text']
     
     return TranslationResponse(translated_text=translated_text)
 
-
+# Generate API Endpoint
 @app.post("/generate/",
           summary="Generate Text",
           description="Generate text based on the input prompt using the mounted text generation model.",
-          response_model=dict)  # Change response model to dict
+          response_model=dict) 
 async def generate(text_generation_request: TextGenerationRequest) -> dict:
-    global text_generator, current_model_type, current_model
+    global text_generator_model_name, text_generator_model, text_generator_tokenizer, text_generator_model_type, text_generator_pipeline
 
-    print("current_model_type: " + current_model_type)
-    if not text_generator and current_model_type != "llama":
+    if not text_generator_model:
         raise HTTPException(status_code=400, detail="No text generation model is currently mounted.")
 
     messages = text_generation_request.prompt
     try:
-        if current_model_type == "llama":
-            generated_results = current_model.create_chat_completion(
+        if text_generator_model_type == "llama":
+            generated_results = text_generator_model.create_chat_completion(
                 messages=messages,
                 max_tokens=text_generation_request.max_tokens,
                 temperature=text_generation_request.temperature
             )
         else:
-            generated_results = text_generator(
+            generated_results = text_generator_pipeline(
                 messages,
                 max_length=text_generation_request.max_tokens,
                 temperature=text_generation_request.temperature
@@ -409,7 +449,7 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
         return generated_results
     elif result_type == 'assistant':
         # Extract the assistant's response
-        if current_model_type == "llama":
+        if text_generator_model_type == "llama":
             assistant_response = generated_results['choices'][0]['message']['content']
         else:
             # Handle other models if needed
@@ -425,6 +465,79 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     else:
         raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
 
+#@app.get("/model_info/")
+async def get_model_info(model_name: str, return_type: str):
+    global download_directory
+    """
+    Retrieve either model configuration or model information from HfApi.
+
+    Args:
+    - model_name: Name of the model to load.
+    - return_type: Either 'config' to return model configuration or 'info' to return model info from HfApi.
+
+    Returns:
+    - Model configuration or model information.
+    """
+
+    # Handle invalid return_type
+    if return_type not in ["config", "info"]:
+        raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
+    
+    try:
+
+        if return_type == "config":
+            model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
+            config_path = os.path.join(model_path, 'config.json')
+            if os.path.exists(config_path):
+                model_path = os.path.join(download_directory, model_name.replace("/", "_"))  # Modify if needed
+                config = AutoConfig.from_pretrained(model_name)
+                
+                return {
+                    "model_name": model_name,
+                    "config": config.to_dict()  # Convert the config object to a dictionary
+                }        
+            else:
+                gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+                model_type = "unknown"
+
+                if gguf_files:
+                    model_type = "llama"  # or any other identifier you wish to use
+
+                    return {
+                        "model_name": model_name,
+                        "message": "No configuration file found. Providing minimal information.",
+                        "minimal_info": {
+                            "supports_TensorFlow": hasattr(AutoModel, 'from_tf'),
+                            "supports_pretrained": hasattr(AutoModel, 'from_pretrained'),
+                            "model_type": model_type  # Add the detected model type
+                        }
+                    }
+        else:
+            # Using HfApi to get model info
+            api = HfApi()
+            model_info = api.model_info(model_name)
+            return {
+                "model_name": model_name,
+                "info": {
+                    "model_id": model_info.modelId,
+                    "pipeline_tag" : model_info.pipeline_tag,
+                    "transformers_info" : model_info.transformers_info,
+                    "card_data" : model_info.card_data,
+                    "siblings" : model_info.siblings,
+                    "library_name" : model_info.library_name,
+                    "widget_data" : model_info.widget_data,
+                    "config" : model_info.config,
+                    "spaces" : model_info.spaces,
+                    "model_type": model_info.modelId.split('/')[-1],
+                    "architecture": model_info.pipeline_tag,
+                    "tags": model_info.tags,
+                    "downloads": model_info.downloads,
+                    "last_updated": model_info.lastModified,
+                    "safetensors" : model_info.safetensors
+                }
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def extract_assistant_response(response):
     """
@@ -491,15 +604,10 @@ def infer_model_type(model_dir: str) -> str:
             # Use regex to find the pipeline_tag value
             pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content)
             if pipeline_tag_match:
-                pipeline_tag_value = pipeline_tag_match.group(1).strip()
-                # Check if the pipeline_tag_value matches known types
-                if pipeline_tag_value == "translation":
-                    return "translation"
-                elif pipeline_tag_value == "text-generation":
-                    return "text-generation"
-                elif pipeline_tag_value == "text2text-generation":
-                    return "text2text-generation"
-
+                pipeline_tag_value = pipeline_tag_match.group(1).strip()                         
+                if pipeline_tag_value in ("text-generation", "text2text-generation", "summarization", "translation"):
+                    return pipeline_tag_value
+                
             # Search for tags specifically
             tags_match = re.search(r'tags:\s*-\s*([\w-]+(?:\n- [\w-]+)*)', readme_content)
             if tags_match:
@@ -507,12 +615,9 @@ def infer_model_type(model_dir: str) -> str:
                 # Look for specific entries in the tags list
                 for tag in tags_list:
                     tag_value = tag.strip().replace('- ', '').strip()  # Clean tag value
-                    if tag_value == "translation":
-                        return "translation"
-                    elif tag_value in ("text-generation", "chat"):
-                        return "text-generation"
-                    elif tag_value == "text2text-generation":
-                        return "text2text-generation"              
+                    if tag_value in ("text-generation", "text2text-generation", "summarization", "translation"):
+                         return tag_value
+                            
 
     # Then, check in the config.json
     config_path = os.path.join(model_path, 'config.json')
@@ -526,13 +631,10 @@ def infer_model_type(model_dir: str) -> str:
                 model_type = config["text_config"].get("model_type", "").lower().strip()
 
             # Infer from model_type
-            if model_type in ["m2m_100", "marian", "mbart", "mistral"]:
-                return "translation"
-            elif model_type in ["qwen2", "t5"]:
-                return "text2text-generation"
-            elif model_type in ["phi3", "llama"]:
-                return "text-generation"
-            # Expand with other mappings based on model_type as needed.
+            if model_type in ["m2m_100", "marian", "mbart", "mistral","qwen2", "t5"]:
+                return "translation"     
+            elif model_type in ["phi3", "mistral"]:
+                return "text-generation"        
 
     # Final check: Look for llama compatible files with the *.gguf extension
     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
@@ -561,6 +663,17 @@ def format_size(size_bytes: int) -> str:
         size_bytes /= 1024
         index += 1
     return f"{size_bytes:.2f} {size_units[index]}"
+
+# Function to get model type based on task
+def get_model_type(task: str):
+    if task in ['translation', 'text2text-generation', 'summarization']:
+        return SUPPORTED_MODEL_TYPES['sequence-generation']
+    elif task in ['text-generation']:
+        return SUPPORTED_MODEL_TYPES['text-generation']
+    elif task in ['llama']:
+        return SUPPORTED_MODEL_TYPES['llama']
+    else:
+        raise ValueError(f"Unsupported task: {task}")
     
 if __name__ == "__main__":
     import uvicorn
