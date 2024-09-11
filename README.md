@@ -24,20 +24,13 @@ By combining the power of Hugging Face's state-of-the-art models with the ease o
 
 The following model types are supported, allowing users to leverage state-of-the-art machine learning capabilities for various natural language processing tasks:
 
-```python
-SUPPORTED_MODEL_TYPES = {
-    'translation': AutoModelForSeq2SeqLM,
-    'text2text-generation': AutoModelForSeq2SeqLM,
-    'text-generation': AutoModelForCausalLM,
-    'llama': Llama
-}
-```
-
-**Model Type Descriptions:**
+**Model Types:**
 
 - **Translation**: Utilizes `AutoModelForSeq2SeqLM`, enabling users to perform translations between multiple languages seamlessly.
 
 - **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
+
+- **Summarization**: Uses `AutoModelForSeq2SeqLM` to condense long pieces of text into shorter summaries, preserving the main points and overall meaning. This model is particularly useful for applications that require quick understanding of large documents or articles.
 
 - **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
 
