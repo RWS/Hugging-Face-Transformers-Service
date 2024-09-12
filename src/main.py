@@ -1,9 +1,6 @@
 from fastapi import FastAPI
-from dotenv import load_dotenv
-from config import config
+from config import config  # Load the configuration
 from api import router
-
-load_dotenv()
 
 app = FastAPI(
     title="Hugging Face Transformers Service",

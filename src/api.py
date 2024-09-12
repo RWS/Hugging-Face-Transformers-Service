@@ -27,7 +27,7 @@ router = APIRouter()
 async def startup_event():
     print(f"Starting server on port {config.PORT}")
     print(f"Downloading models to {config.DOWNLOAD_DIRECTORY}")
-
+    # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
         print("WARNING: You need to set your Hugging Face API token to download models.")
