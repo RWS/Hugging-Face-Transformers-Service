@@ -1,5 +1,6 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from llama_cpp import Llama
+from config import config
 import os
 import shutil
 import glob
@@ -83,7 +84,8 @@ def filter_unwanted_files(files):
 
 def infer_model_type(model_dir: str) -> str:
     """Infer model type based on the 'config.json' or 'README.md' contents."""
-    model_cache_dir = os.getenv("HUGGINGFACE_CACHE_DIR", "/app/model_cache")
+    
+    model_cache_dir = config.DOWNLOAD_DIRECTORY
     model_path = os.path.join(model_cache_dir, model_dir)
 
     # Construct path for README.md
@@ -116,12 +118,12 @@ def infer_model_type(model_dir: str) -> str:
     config_path = os.path.join(model_path, 'config.json')
     if os.path.exists(config_path):
         with open(config_path) as f:
-            config = json.load(f)
-            model_type = config.get("model_type", "").lower().strip()
+            config_file = json.load(f)
+            model_type = config_file.get("model_type", "").lower().strip()
 
             # If not found at the top level, check within text_config if it exists
-            if not model_type and "text_config" in config:
-                model_type = config["text_config"].get("model_type", "").lower().strip()
+            if not model_type and "text_config" in config_file:
+                model_type = config_file["text_config"].get("model_type", "").lower().strip()
 
             # Infer from model_type
             if model_type in ["m2m_100", "marian", "mbart", "mistral","qwen2", "t5"]:

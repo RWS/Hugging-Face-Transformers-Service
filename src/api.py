@@ -1,18 +1,20 @@
 from fastapi import APIRouter, Query, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from huggingface_hub import hf_hub_download, model_info
 from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
-from services import download_model
 from state import download_state  # Import the state management
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
 import os
 from typing import List
-from helpers import infer_model_type, get_directory_size, format_size, get_model_type
+from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files
 from config import config
 import torch
 import shutil
+import json
+import asyncio
 
 
 router = APIRouter()
@@ -95,9 +97,58 @@ async def list_models() -> List[ModelInfo]:
 async def download_model_endpoint(request: ModelRequest) -> dict:
     model_name = request.model_name
    
-    result = await download_model(model_name,  download_state.download_directory, config.huggingface_token)
+    if download_state.is_downloading:
+        raise HTTPException(status_code=400, detail="A download is currently in progress.")
     
-    return {"message": result}
+    download_state.is_downloading = True
+    download_state.download_progress = []  # Reset progress
+    
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
+
+    if os.path.exists(model_path):
+        existing_files = os.listdir(model_path)
+        if len(existing_files) >= 2:
+            return {"message": f"Model '{model_name}' is already downloaded to '{model_path}'."}
+
+    # Create the download directory if it doesn't exist
+    os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
+    
+    async def generate_progress():
+        """Helper function to yield download progress."""    
+        try:
+            info = model_info(model_name)
+            files = info.siblings            
+            filtered_files = filter_unwanted_files(files)
+            total_files = len(filtered_files)
+            download_state.download_progress.append({"message": "Download started."})
+          
+            for index, file in enumerate(filtered_files):
+                try:
+                    file_path = hf_hub_download(repo_id=model_name, 
+                                                filename=file.rfilename, 
+                                                cache_dir=config.DOWNLOAD_DIRECTORY, 
+                                                force_download=True,
+                                                token=config.HUGGINGFACE_TOKEN)
+                    progress_update = {
+                        "file_name": file.rfilename,
+                        "current_index": index + 1,
+                        "total_files": total_files
+                    }
+                    download_state.download_progress.append(progress_update)
+                    yield f"data: {json.dumps(progress_update)}\n\n"
+                    await asyncio.sleep(0.1)  # Simulated download delay
+                except Exception as e:
+                    error_message = f"Error downloading {file.rfilename}: {str(e)}"
+                    download_state.download_progress.append({"error": error_message})
+                    yield f"data: {json.dumps({'error': error_message})}\n\n"
+                    raise
+            download_state.download_progress.append({"status": "Completed"})
+            move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
+        finally:
+            download_state.is_downloading = False
+    
+    return StreamingResponse(generate_progress(), media_type="text/event-stream")
+
 
 @router.get("/download_progress/",
           summary="Check Download Progress",
@@ -235,7 +286,7 @@ async def delete_model(request: ModelRequest) -> dict:
         download_state.models.remove(model_to_delete)
 
     # Construct the model path
-    model_path = os.path.join(download_state.download_directory, "models--" + model_name.replace('/', '--'))
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
 
     # Check if the model path exists
     if not os.path.exists(model_path):
@@ -348,15 +399,15 @@ async def get_model_info(
     try:
 
         if return_type == "config":
-            model_path = os.path.join(download_state.download_directory, "models--" + model_name.replace('/', '--'))
+            model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
             config_path = os.path.join(model_path, 'config.json')
             if os.path.exists(config_path):
-                model_path = os.path.join(download_state.download_directory, model_name.replace("/", "_"))  # Modify if needed
-                config = AutoConfig.from_pretrained(model_name)
+                model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace("/", "_"))  # Modify if needed
+                config_file = AutoConfig.from_pretrained(model_name)
                 
                 return {
                     "model_name": model_name,
-                    "config": config.to_dict()  # Convert the config object to a dictionary
+                    "config": config_file.to_dict()  # Convert the config object to a dictionary
                 }        
             else:
                 gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))

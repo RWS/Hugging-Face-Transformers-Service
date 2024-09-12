@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
+from config import config
 from api import router
-import os
 
 load_dotenv()
 
@@ -11,11 +11,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
 app.include_router(router)
-
-port = os.getenv("PORT", "8001").strip()  # Ensure extra whitespace is removed
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(port))
+    uvicorn.run(app, host="0.0.0.0", port=int(config.PORT))
