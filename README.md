@@ -124,7 +124,7 @@ Ensure you save the changes to the `.env` file before proceeding to run the appl
 Run the FastAPI application:
 
 ```bash
-python src/huggingface_ts.py
+python src/main.py
 ```
 
 ### Step 8: Access Swagger API
