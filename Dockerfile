@@ -11,7 +11,7 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/huggingface_ts.py ./src/huggingface_ts.py
+COPY src/ ./src/ 
 COPY LICENSE .
 COPY README.md .
 
