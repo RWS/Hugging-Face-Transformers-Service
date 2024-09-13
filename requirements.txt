@@ -1,6 +1,6 @@
 fastapi==0.112.1
 transformers==4.44.0
-torch==2.4.0
+torch==2.4.1
 uvicorn==0.30.6
 huggingface_hub==0.24.6
 sentencepiece==0.2.0
