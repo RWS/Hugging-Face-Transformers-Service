@@ -27,6 +27,7 @@ router = APIRouter()
 async def startup_event():
     print(f"Starting server on port {config.PORT}")
     print(f"Downloading models to {config.DOWNLOAD_DIRECTORY}")
+    print(f"Device is configured to use {download_state.device}")
     # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
@@ -187,7 +188,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     
     # Load model and tokenizer based on the model type
     if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
-        model = get_model_type(requested_model_type).from_pretrained(model_path)
+        model = get_model_type(requested_model_type).from_pretrained(model_path).to(download_state.device)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         trans_pipeline = pipeline(
@@ -199,7 +200,7 @@ async def mount_model(request: MountModelRequest) -> dict:
         )
 
     elif requested_model_type == "text-generation":
-        model = get_model_type(requested_model_type).from_pretrained(model_path)        
+        model = get_model_type(requested_model_type).from_pretrained(model_path).to(download_state.device)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         trans_pipeline = pipeline(
@@ -218,7 +219,7 @@ async def mount_model(request: MountModelRequest) -> dict:
             repo_id=model_name,
             filename=filename,
             local_dir=model_path
-        )
+        ).to(download_state.device)  # Move model to GPU if available
         tokenizer = None  # Assuming LLaMA does not use a tokenizer in your context
         trans_pipeline = None
 
@@ -228,11 +229,6 @@ async def mount_model(request: MountModelRequest) -> dict:
     # Create a LocalModel instance and add it to the models list
     local_model = LocalModel(model_name=model_name, model=model, model_type=requested_model_type, tokenizer=tokenizer, pipeline=trans_pipeline)
     download_state.models.append(local_model)
-
-    # Move model to GPU if available
-    if torch.cuda.is_available():
-        model.to('cuda')
-        print(f"Model '{model_name}' moved to GPU.")
 
     return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
 
@@ -313,11 +309,16 @@ async def translate(translation_request: TranslationRequest) -> dict:
     if not model_to_use or not model_to_use.pipeline:
         raise HTTPException(status_code=400, detail="The specified translation model is not currently mounted.")
 
-    translated_text = model_to_use.pipeline(translation_request.text)
-    if isinstance(translated_text, list):
-        translated_text = translated_text[0]['translation_text']
+    input_text = translation_request.text
+    try:
+        translated_text = model_to_use.pipeline(input_text)
+        
+        if isinstance(translated_text, list):
+            translated_text = translated_text[0]['translation_text']
     
-    return TranslationResponse(translated_text=translated_text)
+        return TranslationResponse(translated_text=translated_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during translation: {str(e)}")
 
 
 @router.post("/generate/",
