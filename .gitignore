@@ -52,3 +52,4 @@ python-env-tools/**
 venv/**
 ts-venv/**
 build/main/**
+build/HuggingFace-TS/**

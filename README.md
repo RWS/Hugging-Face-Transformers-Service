@@ -141,7 +141,7 @@ You can interact with the API and test its endpoints by visiting:
 To create an executable for your FastAPI application, use PyInstaller as follows:
 
 ```bash
-pyinstaller --onefile \
+pyinstaller --onefile --name="HuggingFace-TS" \
 --additional-hooks-dir=./hooks \
 --add-data "requirements.txt;." \
 --add-data ".env;." \
@@ -158,17 +158,17 @@ src/main.py
 
 ### Step 2: Copy the `.env` File
 
-After compiling your application, ensure that the `.env` file is present in the same directory as the executable (`main.exe`). Users can also create or modify this file based on their configuration needs.
+After compiling your application, ensure that the `.env` file is present in the same directory as the executable (`HuggingFace-TS.exe`). Users can also create or modify this file based on their configuration needs.
 
 - **Editing the `.env` File**: The `.env` file can be opened and modified using any text editor (e.g., Notepad, Visual Studio Code).
 
 ### Step 3: Start the FastAPI Server
 
-Run the FastAPI application by executing `main.exe` from the `dist` directory:
+Run the FastAPI application by executing `HuggingFace-TS.exe` from the `dist` directory:
 
 ```bash
 cd dist
-main.exe
+HuggingFace-TS.exe
 ```
 
 <br>
