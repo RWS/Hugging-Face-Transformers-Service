@@ -373,7 +373,7 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     else:
         raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
 
-@router.post("/model_info/",
+@router.get("/model_info/",
           summary="Retrieve model info",
           description="Retrieve either model configuration or model information.",
           response_model=dict)
