@@ -141,19 +141,7 @@ You can interact with the API and test its endpoints by visiting:
 To create an executable for your FastAPI application, use PyInstaller as follows:
 
 ```bash
-pyinstaller --onefile --name="HuggingFace-TS" \
---additional-hooks-dir=./hooks \
---add-data "requirements.txt;." \
---add-data ".env;." \
---add-data "LICENSE;." \
---add-data "README.md;." \
---add-data "src/api.py;src/" \
---add-data "src/config.py;src/" \
---add-data "src/helpers.py;src/" \
---add-data "src/main.py;src/" \
---add-data "src/models.py;src/" \
---add-data "src/state.py;src/" \
-src/main.py
+pyinstaller HuggingFace-TS.spec
 ```
 
 ### Step 2: Copy the `.env` File
