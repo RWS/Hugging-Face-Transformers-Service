@@ -5,7 +5,7 @@ a = Analysis(
     ['src\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('requirements.txt', '.'), ('.env', '.'), ('LICENSE', '.'), ('README.md', '.'), ('src/api.py', 'src/'), ('src/config.py', 'src/'), ('src/helpers.py', 'src/'), ('src/main.py', 'src/'), ('src/models.py', 'src/'), ('src/state.py', 'src/')],
+    datas=[('requirements.txt', '.'), ('LICENSE', '.'), ('README.md', '.'), ('src/api.py', 'src/'), ('src/config.py', 'src/'), ('src/helpers.py', 'src/'), ('src/main.py', 'src/'), ('src/models.py', 'src/'), ('src/state.py', 'src/')],
     hiddenimports=[],
     hookspath=['./hooks'],
     hooksconfig={},

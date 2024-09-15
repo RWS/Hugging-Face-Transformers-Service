@@ -101,7 +101,7 @@ To connect to Hugging Face and manage model caching, you'll need to set up your 
 
 ```plaintext
 # Directory where Hugging Face models will be cached
-HUGGINGFACE_CACHE_DIR=C:/HuggingFace/model_cache
+HUGGINGFACE_MODELS_DIR=C:/HuggingFace/model_cache
 
 # Your Hugging Face API token for authentication
 HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
@@ -113,7 +113,7 @@ PORT=8001
 
 **Variable Descriptions**:
 
-- `HUGGINGFACE_CACHE_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
+- `HUGGINGFACE_MODELS_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
 - `HUGGINGFACE_TOKEN`: Replace `Your_Hugging_Face_API_Token` with your actual Hugging Face API token. You can obtain this token from your Hugging Face account settings.
 - `PORT`: Set the port number on which the FastAPI application will listen. The default is `8001`, but you can change this to suit your needs.
 
@@ -175,7 +175,7 @@ HuggingFace-TS.exe
 
 ## API Endpoints
 
-- `GET /list_models/`: Retrieve a list of all downloaded models from the `HUGGINGFACE_CACHE_DIR` directory, including their names and types.
+- `GET /list_models/`: Retrieve a list of all downloaded models from the `HUGGINGFACE_MODELS_DIR` directory, including their names and types.
 - `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
 - `GET /download_progress/`: Polling method to fetch the current download progress of the model, if a download is in progress.
 - `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
@@ -206,18 +206,18 @@ You have two options for running the Docker image based on your environment.
 
 #### 1. Running the Docker Image on a Server
 
-When running the Docker image on a server, set the environment variables for both the cache directory `HUGGINGFACE_CACHE_DIR` and `PORT`. Execute the following command:
+When running the Docker image on a server, set the environment variables for both the cache directory `HUGGINGFACE_MODELS_DIR` and `PORT`. Execute the following command:
 
 ```bash
-docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_CACHE_DIR=/app/model_cache -e PORT=8001 huggingface_ts
+docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_MODELS_DIR=/app/model_cache -e PORT=8001 huggingface_ts
 ```
 
 #### 2. Running the Docker Image Locally
 
-If you are running the Docker image locally, use the following command to mount the cache directory `C:/HuggingFace/model_cache` and specify the port from your host to the `/app/model_cache` directory inside the container. This allows the application to access and store downloaded models locally:
+If you are running the Docker image locally, use the following command to mount the cache directory `C:/HuggingFace/Models` and specify the port from your host to the `/app/model_cache` directory inside the container. This allows the application to access and store downloaded models locally:
 
 ```bash
-docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_CACHE_DIR=/app/model_cache -e PORT=8001 -v C:/HuggingFace/model_cache:/app/model_cache huggingface_ts
+docker run -d -p ${PORT}:${PORT} -e HUGGINGFACE_MODELS_DIR=/app/model_cache -e PORT=8001 -v C:/HuggingFace/Models:/app/model_cache huggingface_ts
 ```
 
 ### View Running Containers

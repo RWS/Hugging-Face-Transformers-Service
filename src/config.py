@@ -21,6 +21,6 @@ class Config:
         # Retrieve configuration values
         self.HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN") or "Your_Hugging_Face_API_Token"
         self.PORT = os.getenv("PORT", "8001")
-        self.DOWNLOAD_DIRECTORY = os.getenv("HUGGINGFACE_CACHE_DIR") or "C:/HuggingFace/model_cache"        
+        self.DOWNLOAD_DIRECTORY = os.getenv("HUGGINGFACE_MODELS_DIR") or "C:/HuggingFace/Models"        
 
 config = Config()  
