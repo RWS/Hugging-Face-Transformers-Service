@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Hugging Face Transformers Service"
+           Language="1033" Version="1.0.0.0"
+           Manufacturer="Trados AppStore Team"
+           UpgradeCode="7fb43771-8930-4bbd-bd37-cb8683bbc2a8">
+
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perUser" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Define properties for user inputs -->
+    <Property Id="INSTALLFOLDER" Value="C:\HuggingFace\Server" />
+    <Property Id="HUGGINGFACE_MODELS_DIR" Value="C:\HuggingFace\Models" />
+    <Property Id="HUGGINGFACE_TOKEN" Value="Your_Hugging_Face_API_Token" />
+    <Property Id="PORT" Value="8001" />
+
+    <!-- Feature components to install -->
+    <Feature Id="ProductFeature" Title="Hugging Face Transformers Service" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+
+    <Binary Id="bgPicWhite" SourceFile="images/bg.bmp"/>
+
+    <!-- UI to let the user specify the installation path -->
+    <UI>
+      <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
+      <UIRef Id="WixUI_InstallDir" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="EnvSettingsDlg" Order="2">1</Publish>
+    </UI>
+
+  </Product>
+
+  <Fragment>
+    <UI Id="EnvSettingsDlgUI">
+
+      <TextStyle Id="WixUI_Bold" FaceName="Tahoma" Size="9" Bold="yes" />
+      <TextStyle Id="WixUI_Gray" FaceName="Tahoma" Size="8" Bold="no" Red="128" Green="128" Blue="128" />
+
+      <Dialog Id="EnvSettingsDlg" Width="370" Height="270" Title="Hugging Face Transformers Service Setup">
+
+        <Control Id="background" Type="Bitmap" Text="bgPicWhite" X="0" Y="0" Width="400" Height="43" TabSkip="no" />
+
+        <Control Id="DialogTitle" Type="Text" X="15" Y="6" Width="330" Height="15" Transparent="yes" Text="{\WixUI_Bold}Configuration Settings" />
+        <Control Id="DialogDescription" Type="Text" X="25" Y="23" Width="330" Height="15" Transparent="yes" Text="Click Next to save the configuration settings." />
+
+        <Control Type="Line" Id="line1" Width="362" Height="2" X="4" Y="43" />
+
+        <Control Id="SettingsTitle" Type="Text" X="20" Y="60" Width="330" Height="15" Text="Please specify configuration settings:" />
+
+        <!-- Models Directory -->
+        <Control Id="HuggingFaceDirLabel" Type="Text" X="20" Y="90" Width="75" Height="15" Text="Models Directory:" />
+        <Control Id="HuggingFaceDir" Type="Edit" X="95" Y="87" Width="250" Height="18" Property="HUGGINGFACE_MODELS_DIR" />
+        <Control Id="HuggingFaceDirDescription" Type="Text" X="95" Y="105" Width="250" Height="15" Text="{\WixUI_Gray}Specify where the Hugging Face models will be located." />
+
+        <!-- Hugging Face API Token -->
+        <Control Id="TokenLabel" Type="Text" X="20" Y="130" Width="75" Height="15" Text="API Token:" />
+        <Control Id="Token" Type="Edit" X="95" Y="127" Width="250" Height="18" Property="HUGGINGFACE_TOKEN" />
+        <Control Id="TokenDescription" Type="Text" X="95" Y="145" Width="250" Height="15" Text="{\WixUI_Gray}Enter your personal Hugging Face API token." />
+
+        <!-- Local Server Port -->
+        <Control Id="PortLabel" Type="Text" X="20" Y="170" Width="75" Height="15" Text="Port:" />
+        <Control Id="Port" Type="Edit" X="95" Y="167" Width="250" Height="18" Property="PORT" />
+        <Control Id="PortDescription" Type="Text" X="95" Y="185" Width="250" Height="15" Text="{\WixUI_Gray}Set the port number for the local server." />
+
+        <Control Type="Line" Id="line2" Width="362" Height="2" X="4" Y="234" />
+
+        <!--Dummy Button-->
+        <Control Id="Back" Type="PushButton" Width="56" Height="18" X="180" Y="242" Text="Back">
+          <Condition Action="disable">1</Condition>
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+
+        <Control Id="Next" Type="PushButton" Width="56" Height="18" X="236" Y="242" Text="Next">
+          <Publish Event="DoAction" Value="SaveUserInfoCustomAction">1</Publish>
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+
+        <!--Dummy Button-->
+        <Control Id="Cancel" Type="PushButton" Width="56" Height="18" X="304" Y="242" Text="Cancel">
+          <Condition Action="disable">1</Condition>
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+
+      </Dialog>
+    </UI>
+
+    <InstallUISequence>
+      <Show Dialog="EnvSettingsDlg" After="ExecuteAction">NOT REMOVE AND NOT UPGRADING AND NOT REINSTALL AND NOT Installed</Show>
+    </InstallUISequence>
+  </Fragment>
+
+  <Fragment>
+    <Binary Id="CustomActionBinary" SourceFile="$(var.SaveUserInfoCustomAction.TargetDir)$(var.SaveUserInfoCustomAction.TargetName).CA.dll"/>
+    <CustomAction Id="SaveUserInfoCustomAction" BinaryKey="CustomActionBinary" DllEntry="SaveUserInfo"  />
+  </Fragment>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="INSTALLFOLDER" Name="InstallDir">
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="HuggingFaceTS" Guid="439d1ecf-782e-47a6-99aa-b4149ccadbdb">
+        <File Source="..\..\..\..\Hugging-Face-Transformers-Service\dist\HuggingFace-TS.exe" KeyPath="yes"/>
+      </Component>
+      <Component Id="EnvFile" Guid="62f94f94-bd13-4fd8-b695-76936e743c2b">
+        <File Source="..\..\..\..\Hugging-Face-Transformers-Service\dist\.env" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

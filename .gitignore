@@ -30,6 +30,8 @@ languageServer/**
 languageServer.*/**
 bin/**
 obj/**
+**/bin/**
+**/obj/**
 .pytest_cache
 tmp/**
 .python-version
@@ -53,3 +55,4 @@ venv/**
 ts-venv/**
 build/main/**
 build/HuggingFace-TS/**
+*.wixproj.user
