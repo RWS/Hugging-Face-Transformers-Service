@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <UI>
+
+      <TextStyle Id="WixUI_Bold" FaceName="Tahoma" Size="9" Bold="yes" />
+      <TextStyle Id="WixUI_Gray" FaceName="Tahoma" Size="8" Bold="no" Red="128" Green="128" Blue="128" />
+
+      <Dialog Id="UserRegistrationDlg" Width="370" Height="270" Title="[ProductName] Setup">
+
+        <Control Id="background" Type="Bitmap" Text="bgPicWhite" X="0" Y="0" Width="400" Height="43" TabSkip="no" />
+
+        <Control Id="DialogTitle" Type="Text" X="15" Y="6" Width="330" Height="15" Transparent="yes" Text="{\WixUI_Bold}Configuration Settings" />
+        <Control Id="DialogDescription" Type="Text" X="25" Y="23" Width="330" Height="15" Transparent="yes" Text="Click Next to save the configuration settings." />
+
+        <Control Type="Line" Id="line1" Width="362" Height="2" X="4" Y="43" />
+
+        <Control Id="SettingsTitle" Type="Text" X="20" Y="60" Width="330" Height="15" Text="Please specify configuration settings:" />
+
+        <!-- Models Directory -->
+        <Control Id="HuggingFaceDirLabel" Type="Text" X="20" Y="90" Width="75" Height="15" Text="Models Directory:" />
+        <Control Id="HuggingFaceDir" Type="Edit" X="95" Y="87" Width="250" Height="18" Property="HUGGINGFACE_MODELS_DIR" />
+        <Control Id="HuggingFaceDirDescription" Type="Text" X="95" Y="105" Width="250" Height="15" Text="{\WixUI_Gray}Specify where the Hugging Face models will be located." />
+
+        <!-- Hugging Face API Token -->
+        <Control Id="TokenLabel" Type="Text" X="20" Y="130" Width="75" Height="15" Text="API Token:" />
+        <Control Id="Token" Type="Edit" X="95" Y="127" Width="250" Height="18" Property="HUGGINGFACE_TOKEN" />
+        <Control Id="TokenDescription" Type="Text" X="95" Y="145" Width="250" Height="15" Text="{\WixUI_Gray}Enter your personal Hugging Face API token." />
+
+        <!-- Local Server Port -->
+        <Control Id="PortLabel" Type="Text" X="20" Y="170" Width="75" Height="15" Text="Port:" />
+        <Control Id="Port" Type="Edit" X="95" Y="167" Width="250" Height="18" Property="PORT" />
+        <Control Id="PortDescription" Type="Text" X="95" Y="185" Width="250" Height="15" Text="{\WixUI_Gray}Set the port number for the local server." />
+
+        <Control Type="Line" Id="line2" Width="362" Height="2" X="4" Y="234" />
+       
+        <Control Id="Back" Type="PushButton" Width="56" Height="18" X="180" Y="242" Text="Back">      
+        </Control>
+
+        <Control Id="Next" Type="PushButton" Width="56" Height="18" X="236" Y="242" Text="Next">       
+        </Control>
+       
+        <Control Id="Cancel" Type="PushButton" Width="56" Height="18" X="304" Y="242" Text="Cancel">          
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+
+      </Dialog>
+    </UI>
+    
+  </Fragment>
+</Wix>

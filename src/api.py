@@ -16,17 +16,13 @@ import shutil
 import json
 import asyncio
 
-
 router = APIRouter()
 
-# @router.get("/")
-# async def root():
-#     return {"message": "Hello, World!"}
 
 @router.on_event("startup")
 async def startup_event():
-    print(f"Starting server on port {config.PORT}")
-    print(f"Downloading models to {config.DOWNLOAD_DIRECTORY}")
+    print(f"Server port: {config.PORT}")
+    print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
     print(f"Device is configured to use {download_state.device}")
     # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly

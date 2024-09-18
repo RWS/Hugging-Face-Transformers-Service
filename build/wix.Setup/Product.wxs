@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?include Defines.wxi ?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+	         Name="$(var.appName)"
+	         Language="1033" 
+           Version="$(var.productVersion)"
+	         Manufacturer="$(var.manufacturer)"
+	         UpgradeCode="$(var.upgradeCode)">
+
+    <Package InstallerVersion="200"
+		         Compressed="yes"
+		         InstallScope="perUser" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." 
+                  AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallInitialize"/>
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <UIRef Id="WixUI_MyInstallDir" />
+
+    <Icon Id="icon.ico" SourceFile="icon.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
+    
+    <Binary Id="bgPicWhite" SourceFile="images/bg.bmp"/>
+   
+    <!-- Define properties for user inputs -->
+    <Property Id="INSTALLFOLDER" Value="$(var.defaultInstallFolder)" />
+    <Property Id="HUGGINGFACE_MODELS_DIR" Value="$(var.defaultModelsDirectory)" />
+    <Property Id="HUGGINGFACE_TOKEN" Value="$(var.defaultAPIToken)" />
+    <Property Id="PORT" Value="$(var.defaultPort)" />
+    
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
+  
+
+    <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">     
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+    
+    <InstallExecuteSequence>
+      <Custom Action="SaveUserConfigurationAction" After="InstallFinalize">NOT Installed</Custom>
+    </InstallExecuteSequence>
+    
+  </Product>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="INSTALLFOLDER" Name="InstallDir">
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>          
+    <Binary Id='SaveUserConfigurationBinary' 
+            SourceFile='..\bin\Debug\HuggingFaceTS.ConfigurationTasks.CA.dll' />
+    
+    <CustomAction Id='SaveUserConfigurationAction' 
+                  BinaryKey='SaveUserConfigurationBinary' 
+                  DllEntry='SaveUserConfiguration' 
+                  Execute="immediate"
+                  Return="check"/>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="HuggingFaceTS" Guid="635A34E0-22F6-4086-BF9D-8E0911C43437">
+        <File Source="..\..\dist\HuggingFace-TS.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="EnvFile" Guid="9281981C-F102-4346-BF5B-95F40AD18FBB">
+        <File Source="..\..\dist\.env" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    
+
+  </Fragment>
+ 
+</Wix>

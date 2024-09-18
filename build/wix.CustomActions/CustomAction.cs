@@ -3,12 +3,12 @@ using System.IO;
 using System.Text;
 using Microsoft.Deployment.WindowsInstaller;
 
-namespace SaveUserInfoCustomAction
+namespace HuggingFaceTS.ConfigurationTasks
 {
     public class CustomActions
-    {
-        [CustomAction]
-        public static ActionResult SaveUserInfo(Session session)
+	{
+		[CustomAction]
+		public static ActionResult SaveUserConfiguration(Session session)
         {
             // Retrieve configuration settings from session properties
             string installDir = session["INSTALLFOLDER"];
@@ -52,5 +52,5 @@ namespace SaveUserInfoCustomAction
                 return ActionResult.Failure;
             }
         }
-    }
+	}
 }

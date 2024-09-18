@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Include>
+  <?define productVersion = "1.0.0.1"?>
+  <?define upgradeCode = "3EF8FE8F-4B3C-48EE-B646-40677C64EC1F"?>
+  <?define appName = "Hugging Face Transformers Service"?>
+  <?define manufacturer = "RWS AppStore Team"?>
+
+  <?define defaultInstallFolder = "C:\HuggingFace\Server"?>
+  <?define defaultModelsDirectory = "C:\HuggingFace\Models"?>
+  <?define defaultAPIToken = "Your_Hugging_Face_API_Token"?>
+  <?define defaultPort = "8001"?>
+
+</Include>
