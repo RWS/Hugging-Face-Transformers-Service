@@ -4,7 +4,7 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
 	         Name="$(var.appName)"
-	         Language="1033" 
+	         Language="1033"
            Version="$(var.productVersion)"
 	         Manufacturer="$(var.manufacturer)"
 	         UpgradeCode="$(var.upgradeCode)">
@@ -13,7 +13,7 @@
 		         Compressed="yes"
 		         InstallScope="perUser" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." 
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   AllowSameVersionUpgrades="yes"
                   Schedule="afterInstallInitialize"/>
 
@@ -23,57 +23,97 @@
 
     <Icon Id="icon.ico" SourceFile="icon.ico"/>
     <Property Id="ARPPRODUCTICON" Value="icon.ico" />
-    
+
     <Binary Id="bgPicWhite" SourceFile="images/bg.bmp"/>
-   
+
     <!-- Define properties for user inputs -->
     <Property Id="INSTALLFOLDER" Value="$(var.defaultInstallFolder)" />
     <Property Id="HUGGINGFACE_MODELS_DIR" Value="$(var.defaultModelsDirectory)" />
     <Property Id="HUGGINGFACE_TOKEN" Value="$(var.defaultAPIToken)" />
     <Property Id="PORT" Value="$(var.defaultPort)" />
-    
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
-  
 
-    <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">     
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
+
+
+    <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="ApplicationShortcutDesktop"/>
+      <ComponentRef Id="ApplicationShortcutStartMenu"/>
     </Feature>
-    
+
     <InstallExecuteSequence>
       <Custom Action="SaveUserConfigurationAction" After="InstallFinalize">NOT Installed</Custom>
     </InstallExecuteSequence>
-    
+
   </Product>
 
   <Fragment>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="INSTALLFOLDER" Name="InstallDir">
       </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop"></Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="$(var.appName)"/>
+      </Directory>
     </Directory>
   </Fragment>
 
-  <Fragment>          
-    <Binary Id='SaveUserConfigurationBinary' 
+  <Fragment>
+    <Binary Id='SaveUserConfigurationBinary'
             SourceFile='..\bin\Debug\HuggingFaceTS.ConfigurationTasks.CA.dll' />
-    
-    <CustomAction Id='SaveUserConfigurationAction' 
-                  BinaryKey='SaveUserConfigurationBinary' 
-                  DllEntry='SaveUserConfiguration' 
+
+    <CustomAction Id='SaveUserConfigurationAction'
+                  BinaryKey='SaveUserConfigurationBinary'
+                  DllEntry='SaveUserConfiguration'
                   Execute="immediate"
                   Return="check"/>
   </Fragment>
 
   <Fragment>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <Component Id="HuggingFaceTS" Guid="635A34E0-22F6-4086-BF9D-8E0911C43437">
+      <Component Id="HuggingFaceTS" Guid="0C242C05-5E6C-4E45-9A00-8ED5F5A0EABB">
         <File Source="..\..\dist\HuggingFace-TS.exe" KeyPath="yes" />
       </Component>
-      <Component Id="EnvFile" Guid="9281981C-F102-4346-BF5B-95F40AD18FBB">
+      <Component Id="EnvFile" Guid="31B020C2-7FDC-434E-89D6-DB81A7B83DE5">
         <File Source="..\..\dist\.env" KeyPath="yes" />
       </Component>
     </ComponentGroup>
-    
+  </Fragment>
+
+
+  <Fragment>
+
+    <!-- Desktop Shortcut -->
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="ApplicationShortcutDesktop" Guid="A84CB083-1030-49CF-A32B-1801CE685FDD">
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="$(var.appName)"
+                  Description="$(var.appName)"
+                  Target="[INSTALLFOLDER]\HuggingFace-TS.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="icon.ico"/>
+        <RemoveFolder Id="RemoveDesktopShortcuts" On="uninstall"/>
+        <RegistryValue Root="HKCU" Key="Software\HuggingFace-TS" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+
+    <!-- Start Menu Shortcut -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcutStartMenu" Guid="52A84EC2-6809-4CD1-867F-ACA3C702AD50">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="$(var.appName)"
+                  Description="$(var.appName)"
+                  Target="[INSTALLFOLDER]\HuggingFace-TS.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="icon.ico"/>
+        <RemoveFolder Id="RemoveStartMenuShortcuts" On="uninstall"/>
+        <RegistryValue Root="HKCU" Key="Software\HuggingFace-TS" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
 
   </Fragment>
- 
+
+
 </Wix>

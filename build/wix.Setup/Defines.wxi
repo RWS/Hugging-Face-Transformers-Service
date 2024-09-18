@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Include>
   <?define productVersion = "1.0.0.1"?>
-  <?define upgradeCode = "3EF8FE8F-4B3C-48EE-B646-40677C64EC1F"?>
+  <?define upgradeCode = "A3098458-7062-4A28-9909-66B8DE893161"?>
   <?define appName = "Hugging Face Transformers Service"?>
   <?define manufacturer = "RWS AppStore Team"?>
 
