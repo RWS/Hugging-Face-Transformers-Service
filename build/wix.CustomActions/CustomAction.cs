@@ -11,10 +11,11 @@ namespace HuggingFaceTS.ConfigurationTasks
 		public static ActionResult SaveUserConfiguration(Session session)
         {
             // Retrieve configuration settings from session properties
-            string installDir = session["INSTALLFOLDER"];
-            string modelsDir = session["HUGGINGFACE_MODELS_DIR"];
-            string token = session["HUGGINGFACE_TOKEN"];
-            string port = session["PORT"];
+            var installDir = session["INSTALLFOLDER"];
+            var modelsDir = session["HUGGINGFACE_MODELS_DIR"];
+            var token = session["HUGGINGFACE_TOKEN"];
+            var host = session["HOST"];
+            var port = session["PORT"];
 
             // Validate the installation directory
             if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir))
@@ -23,7 +24,7 @@ namespace HuggingFaceTS.ConfigurationTasks
                 return ActionResult.NotExecuted;
             }
 
-            string envFilePath = Path.Combine(installDir, ".env");
+            var envFilePath = Path.Combine(installDir, ".env");
 
             try
             {
@@ -35,7 +36,10 @@ namespace HuggingFaceTS.ConfigurationTasks
                     .AppendLine("# Your Hugging Face API token for authentication")
                     .AppendLine($"HUGGINGFACE_TOKEN={token}")
                     .AppendLine()
-                    .AppendLine("# Port to run the FastAPI application")
+                    .AppendLine("# HOST IP address to run the REST API application")
+                    .AppendLine($"HOST={host}")
+                    .AppendLine()
+                    .AppendLine("# Port number to run the REST API application")
                     .AppendLine($"PORT={port}")
                     .ToString();
 

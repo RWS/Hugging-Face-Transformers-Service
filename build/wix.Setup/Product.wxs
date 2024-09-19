@@ -22,14 +22,13 @@
     <UIRef Id="WixUI_MyInstallDir" />
 
     <Icon Id="icon.ico" SourceFile="icon.ico"/>
-    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
-
-    <Binary Id="bgPicWhite" SourceFile="images/bg.bmp"/>
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />    
 
     <!-- Define properties for user inputs -->
     <Property Id="INSTALLFOLDER" Value="$(var.defaultInstallFolder)" />
     <Property Id="HUGGINGFACE_MODELS_DIR" Value="$(var.defaultModelsDirectory)" />
     <Property Id="HUGGINGFACE_TOKEN" Value="$(var.defaultAPIToken)" />
+    <Property Id="HOST" Value="$(var.defaultHost)" />
     <Property Id="PORT" Value="$(var.defaultPort)" />
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>

@@ -18,9 +18,9 @@ import asyncio
 
 router = APIRouter()
 
-
 @router.on_event("startup")
 async def startup_event():
+    print(f"Server host: {config.HOST}")
     print(f"Server port: {config.PORT}")
     print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
     print(f"Device is configured to use {download_state.device}")

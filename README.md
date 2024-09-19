@@ -106,8 +106,10 @@ HUGGINGFACE_MODELS_DIR=C:/HuggingFace/model_cache
 # Your Hugging Face API token for authentication
 HUGGINGFACE_TOKEN=Your_Hugging_Face_API_Token
 
-# Port to run the FastAPI application
-# Adjust this to change the application's running port
+# HOST IP address to run the REST API application
+HOST=0.0.0.0
+
+# Port number to run the REST API application
 PORT=8001
 ```
 
@@ -115,6 +117,7 @@ PORT=8001
 
 - `HUGGINGFACE_MODELS_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
 - `HUGGINGFACE_TOKEN`: Replace `Your_Hugging_Face_API_Token` with your actual Hugging Face API token. You can obtain this token from your Hugging Face account settings.
+- `HOST`: Set the host IP address for the FastAPI application. The default is `0.0.0.0` to allow access from any IP.
 - `PORT`: Set the port number on which the FastAPI application will listen. The default is `8001`, but you can change this to suit your needs.
 
 Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the FastAPI application on the specified port.

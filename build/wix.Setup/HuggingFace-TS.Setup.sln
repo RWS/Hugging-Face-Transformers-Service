@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.11.35219.272
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "hfts.Setup", "hfts.Setup.wixproj", "{48096C24-6037-4685-8DEB-33E3A0819832}"
+Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "HuggingFace-TS.Setup", "HuggingFace-TS.Setup.wixproj", "{48096C24-6037-4685-8DEB-33E3A0819832}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

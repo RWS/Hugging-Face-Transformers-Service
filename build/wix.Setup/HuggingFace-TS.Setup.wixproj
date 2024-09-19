@@ -6,18 +6,18 @@
     <ProductVersion>3.10</ProductVersion>
     <ProjectGuid>48096c24-6037-4685-8deb-33e3a0819832</ProjectGuid>
     <SchemaVersion>2.0</SchemaVersion>
-    <OutputName>htfs.Setup</OutputName>
+    <OutputName>HuggingFace-TS.Setup</OutputName>
     <OutputType>Package</OutputType>
-    <Name>htfs.Setup</Name>
+    <Name>HuggingFace-TS.Setup</Name>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
-    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <OutputPath>..\..\dist\</OutputPath>
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
     <DefineConstants>Debug</DefineConstants>
     <SuppressValidation>True</SuppressValidation>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
-    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <OutputPath>..\..\dist\</OutputPath>
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
     <SuppressValidation>True</SuppressValidation>
   </PropertyGroup>
@@ -37,12 +37,8 @@
     </WixExtension>
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="images\" />
-  </ItemGroup>
-  <ItemGroup>
     <Content Include="Defines.wxi" />
     <Content Include="Icon.ico" />
-    <Content Include="images\bg.bmp" />
   </ItemGroup>
   <Import Project="$(WixTargetsPath)" Condition=" '$(WixTargetsPath)' != '' " />
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\WiX\v3.x\Wix.targets" Condition=" '$(WixTargetsPath)' == '' AND Exists('$(MSBuildExtensionsPath32)\Microsoft\WiX\v3.x\Wix.targets') " />
