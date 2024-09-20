@@ -215,7 +215,7 @@ async def mount_model(request: MountModelRequest) -> dict:
             repo_id=model_name,
             filename=filename,
             local_dir=model_path
-        ).to(download_state.device)  # Move model to GPU if available
+        )
         tokenizer = None  # Assuming LLaMA does not use a tokenizer in your context
         trans_pipeline = None
 
