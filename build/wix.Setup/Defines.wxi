@@ -3,7 +3,7 @@
   <?define productVersion = "1.0.1"?>
   <?define upgradeCode = "A3098458-7062-4A28-9909-66B8DE893161"?>
   <?define appName = "Hugging Face Transformers Service"?>
-  <?define manufacturer = "RWS AppStore Team"?>
+  <?define manufacturer = "Trados AppStore Team"?>
 
   <?define defaultInstallFolder = "C:\HuggingFace\Server"?>
   <?define defaultModelsDirectory = "C:\HuggingFace\Models"?>
