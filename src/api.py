@@ -125,7 +125,7 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
             files = info.siblings            
             filtered_files = filter_unwanted_files(files)
             total_files = len(filtered_files)
-            
+
             model_state.download_progress["total_files"] = total_files            
             model_state.download_progress["status"] = "Downloading"
             model_state.download_progress["message"] = f"Downloaded {0} of {total_files}"
@@ -139,17 +139,21 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
                                                 token=config.HUGGINGFACE_TOKEN)
                     progress_update = {
                         "file_name": file.rfilename,
-                        "current_index": index + 1
+                        "current_index": index + 1,
+                        "total_files": total_files
                     }
 
                     model_state.download_progress["files"].append(progress_update)
                     model_state.download_progress["message"] = f"Downloaded {index + 1} of {total_files}"
                     
+                    # for clients that fully support SEE
                     yield f"data: {json.dumps(progress_update)}\n\n"
                     await asyncio.sleep(0.1)  # Simulated download delay
                 except Exception as e:
                     error_message = f"Error downloading {file.rfilename}: {str(e)}"
                     model_state.download_progress["error"] = error_message
+
+                    # for clients that fully support SEE
                     yield f"data: {json.dumps(model_state.download_progress)}\n\n"
                     raise
 
