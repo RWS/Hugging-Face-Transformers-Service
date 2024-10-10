@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
 from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
-from state import download_state  # Import the state management
+from state import model_state  # Import the state management
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
@@ -23,7 +23,7 @@ async def startup_event():
     print(f"Server host: {config.HOST}")
     print(f"Server port: {config.PORT}")
     print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
-    print(f"Device is configured to use {download_state.device}")
+    print(f"Device is configured to use {model_state.device}")
     # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
@@ -60,7 +60,7 @@ async def list_models() -> List[ModelInfo]:
             
             # Format the model size as a human-readable string
             formatted_size = format_size(model_size)
-            is_mounted = any(model.model_name == model_name for model in download_state.models)  # Check if model is mounted
+            is_mounted = any(model.model_name == model_name for model in model_state.models)  # Check if model is mounted
             
             models_info.append({
                 "model_name": model_name,
@@ -94,31 +94,42 @@ async def list_models() -> List[ModelInfo]:
 async def download_model_endpoint(request: ModelRequest) -> dict:
     model_name = request.model_name
    
-    if download_state.is_downloading:
+    if model_state.is_downloading:
         raise HTTPException(status_code=400, detail="A download is currently in progress.")
     
-    download_state.is_downloading = True
-    download_state.download_progress = []  # Reset progress
+    model_state.is_downloading = True
+    model_state.download_progress = {
+        "status": "Starting...",
+        "message": "",
+        "error": None,
+        "files": []
+    }
     
     model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
 
     if os.path.exists(model_path):
         existing_files = os.listdir(model_path)
         if len(existing_files) >= 2:
-            return {"message": f"Model '{model_name}' is already downloaded to '{model_path}'."}
+            return {"status": "Download not started.", "message": f"Model '{model_name}' is already downloaded to '{model_path}'."}
+
+
+    model_state.download_progress["status"] = "Download started."
 
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     
     async def generate_progress():
         """Helper function to yield download progress."""    
-        try:
+        try:        
             info = model_info(model_name)
             files = info.siblings            
             filtered_files = filter_unwanted_files(files)
             total_files = len(filtered_files)
-            download_state.download_progress.append({"message": "Download started."})
-          
+            
+            model_state.download_progress["total_files"] = total_files            
+            model_state.download_progress["status"] = "Downloading"
+            model_state.download_progress["message"] = f"Downloaded {0} of {total_files}"
+
             for index, file in enumerate(filtered_files):
                 try:
                     file_path = hf_hub_download(repo_id=model_name, 
@@ -128,21 +139,24 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
                                                 token=config.HUGGINGFACE_TOKEN)
                     progress_update = {
                         "file_name": file.rfilename,
-                        "current_index": index + 1,
-                        "total_files": total_files
+                        "current_index": index + 1
                     }
-                    download_state.download_progress.append(progress_update)
+
+                    model_state.download_progress["files"].append(progress_update)
+                    model_state.download_progress["message"] = f"Downloaded {index + 1} of {total_files}"
+                    
                     yield f"data: {json.dumps(progress_update)}\n\n"
                     await asyncio.sleep(0.1)  # Simulated download delay
                 except Exception as e:
                     error_message = f"Error downloading {file.rfilename}: {str(e)}"
-                    download_state.download_progress.append({"error": error_message})
-                    yield f"data: {json.dumps({'error': error_message})}\n\n"
+                    model_state.download_progress["error"] = error_message
+                    yield f"data: {json.dumps(model_state.download_progress)}\n\n"
                     raise
-            download_state.download_progress.append({"status": "Completed"})
+
+            model_state.download_progress["status"] = "Completed"
             move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
         finally:
-            download_state.is_downloading = False
+            model_state.is_downloading = False
     
     return StreamingResponse(generate_progress(), media_type="text/event-stream")
 
@@ -152,10 +166,10 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
           description="Polling method to fetch the current download progress of the model, if a download is in progress.")
 async def get_progress() -> JSONResponse:
     """Returns the current download progress."""
-    if not download_state.is_downloading:
+    if not model_state.is_downloading:
         return JSONResponse(content={"message": "No download in progress"})
     
-    return JSONResponse(content={"progress": download_state.download_progress})
+    return JSONResponse(content={"progress": model_state.download_progress})
 
 
 @router.post("/mount_model/",
@@ -170,12 +184,14 @@ async def mount_model(request: MountModelRequest) -> dict:
     requested_model_type = request.model_type
     
     # Check if the model is already mounted
-    if any(model.model_name == model_name for model in download_state.models):
+    if any(model.model_name == model_name for model in model_state.models):
         return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
 
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))
-
-    if not os.path.exists(model_path):
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
+    if (not os.path.exists(model_path)):
+        model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))    
+    
+    if (not os.path.exists(model_path)):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
 
     tokenizer = None
@@ -184,7 +200,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     
     # Load model and tokenizer based on the model type
     if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
-        model = get_model_type(requested_model_type).from_pretrained(model_path).to(download_state.device)
+        model = get_model_type(requested_model_type).from_pretrained(model_path).to(model_state.device)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         trans_pipeline = pipeline(
@@ -196,7 +212,7 @@ async def mount_model(request: MountModelRequest) -> dict:
         )
 
     elif requested_model_type == "text-generation":
-        model = get_model_type(requested_model_type).from_pretrained(model_path).to(download_state.device)
+        model = get_model_type(requested_model_type).from_pretrained(model_path).to(model_state.device)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         trans_pipeline = pipeline(
@@ -224,7 +240,7 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     # Create a LocalModel instance and add it to the models list
     local_model = LocalModel(model_name=model_name, model=model, model_type=requested_model_type, tokenizer=tokenizer, pipeline=trans_pipeline)
-    download_state.models.append(local_model)
+    model_state.models.append(local_model)
 
     return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
 
@@ -240,7 +256,7 @@ async def unmount_model(request: ModelRequest) -> dict:
     model_name = request.model_name
     
     # Check if the model is currently mounted
-    model_to_unmount = next((model for model in download_state.models if model.model_name == model_name), None)
+    model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
     
     if model_to_unmount is None:
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not currently mounted.")
@@ -251,7 +267,7 @@ async def unmount_model(request: ModelRequest) -> dict:
         print(f"Model '{model_name}' moved to CPU.")
 
     # Remove the model from the global models list
-    download_state.models.remove(model_to_unmount)
+    model_state.models.remove(model_to_unmount)
 
     return {"message": f"Model '{model_name}' unmounted successfully."}
 
@@ -266,7 +282,7 @@ async def delete_model(request: ModelRequest) -> dict:
     model_name = request.model_name
     
     # Find the model in the global models list
-    model_to_delete = next((model for model in download_state.models if model.model_name == model_name), None)
+    model_to_delete = next((model for model in model_state.models if model.model_name == model_name), None)
     
     if model_to_delete:        
         # Free resources if it was on GPU
@@ -275,10 +291,12 @@ async def delete_model(request: ModelRequest) -> dict:
             print(f"Model '{model_name}' moved to CPU.")
 
         # Remove the model from the global models list
-        download_state.models.remove(model_to_delete)
+        model_state.models.remove(model_to_delete)
 
     # Construct the model path
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
+    if (not os.path.exists(model_path)):
+        model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--')) 
 
     # Check if the model path exists
     if not os.path.exists(model_path):
@@ -301,7 +319,7 @@ async def translate(translation_request: TranslationRequest) -> dict:
     """Translate input text using the specified translation model."""
     
     # Find the corresponding translator model in the models list
-    model_to_use = next((model for model in download_state.models if model.model_name == translation_request.model_name), None)
+    model_to_use = next((model for model in model_state.models if model.model_name == translation_request.model_name), None)
     if not model_to_use or not model_to_use.pipeline:
         raise HTTPException(status_code=400, detail="The specified translation model is not currently mounted.")
 
@@ -325,7 +343,7 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     """Generate text using the specified text generation model."""
     
     # Find the corresponding text generation model in the models list
-    model_to_use = next((model for model in download_state.models if model.model_name == text_generation_request.model_name), None)
+    model_to_use = next((model for model in model_state.models if model.model_name == text_generation_request.model_name), None)
     if not model_to_use:
         raise HTTPException(status_code=400, detail="The specified text generation model is not currently mounted.")
 

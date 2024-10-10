@@ -130,10 +130,13 @@ Run the FastAPI application:
 python src/main.py
 ```
 
-### Step 8: Access Swagger API
+### Step 8: Access Swagger API & Documentation
 
 You can interact with the API and test its endpoints by visiting:
 [http://localhost:8001/docs](http://localhost:8001/docs)
+
+Documentation:
+[http://localhost:8001/redoc](http://localhost:8001/redoc)
 
 <br>
 
