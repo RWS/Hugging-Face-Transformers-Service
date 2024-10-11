@@ -139,7 +139,7 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
                                                 token=config.HUGGINGFACE_TOKEN)
                     progress_update = {
                         "file_name": file.rfilename,
-                        "current_index": index + 1,
+                        "index": index + 1,
                         "total_files": total_files
                     }
 
