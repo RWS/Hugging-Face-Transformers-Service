@@ -87,8 +87,7 @@ def infer_model_type(model_dir: str) -> str:
     
     model_cache_dir = config.DOWNLOAD_DIRECTORY
     model_path = os.path.join(model_cache_dir, model_dir)
-
-    # Construct path for README.md
+   
     readme_path = os.path.join(model_path, 'README.md')
 
     # Check the README for specific information
@@ -136,7 +135,7 @@ def infer_model_type(model_dir: str) -> str:
     if gguf_files:
         return "llama"
     
-    return "unknown"  # Fallback if type cannot be determined
+    return "unknown" 
 
 def get_directory_size(directory: str) -> int:
     """Calculate the total size of the directory."""

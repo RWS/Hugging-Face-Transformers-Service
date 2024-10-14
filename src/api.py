@@ -66,7 +66,7 @@ async def list_models() -> List[ModelInfo]:
                 "model_name": model_name,
                 "model_type": model_type,
                 "model_mounted": is_mounted,
-                "model_size_bytes": formatted_size  # Now it is a string
+                "model_size_bytes": formatted_size
             })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
@@ -236,7 +236,7 @@ async def mount_model(request: MountModelRequest) -> dict:
             filename=filename,
             local_dir=model_path
         )
-        tokenizer = None  # Assuming LLaMA does not use a tokenizer in your context
+        tokenizer = None 
         trans_pipeline = None
 
     else:
@@ -378,8 +378,7 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
         # Extract the assistant's response
         if model_to_use.model_type == "llama":
             assistant_response = generated_results['choices'][0]['message']['content']
-        else:
-            # Handle other models if needed
+        else:    
             if isinstance(generated_results, list) and len(generated_results) > 0:
                 first_result = generated_results[0]
                 if isinstance(first_result, dict) and 'generated_text' in first_result:
@@ -421,19 +420,19 @@ async def get_model_info(
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
             config_path = os.path.join(model_path, 'config.json')
             if os.path.exists(config_path):
-                model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace("/", "_"))  # Modify if needed
+                model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace("/", "_"))
                 config_file = AutoConfig.from_pretrained(model_name)
                 
                 return {
                     "model_name": model_name,
-                    "config": config_file.to_dict()  # Convert the config object to a dictionary
+                    "config": config_file.to_dict() 
                 }        
             else:
                 gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
                 model_type = "unknown"
 
                 if gguf_files:
-                    model_type = "llama"  # or any other identifier you wish to use
+                    model_type = "llama" 
 
                     return {
                         "model_name": model_name,
@@ -444,8 +443,7 @@ async def get_model_info(
                             "model_type": model_type  # Add the detected model type
                         }
                     }
-        else:
-            # Using HfApi to get model info
+        else:            
             api = HfApi()
             model_info = api.model_info(model_name)
             return {

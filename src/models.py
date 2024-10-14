@@ -63,7 +63,7 @@ class MountModelRequest(BaseModel):
 class TranslationResponse(BaseModel):
     translated_text: str = Field(
         description="The generated text from the model based on the provided prompt.",
-        example="Il gatto è sul tavolo."  # Example translation output
+        example="Il gatto è sul tavolo." 
     )   
     
     class Config:
@@ -87,7 +87,7 @@ class ModelInfo(BaseModel):
     model_size_bytes: str
 
     class Config:
-        protected_namespaces = ()  # Disable protected namespaces    
+        protected_namespaces = ()  
 
 class LocalModel:
     def __init__(self, model_name: str, model, model_type: str, tokenizer, pipeline):
@@ -98,4 +98,4 @@ class LocalModel:
         self.pipeline = pipeline
 
     class Config:
-        protected_namespaces = ()  # Disable protected namespaces
+        protected_namespaces = () 

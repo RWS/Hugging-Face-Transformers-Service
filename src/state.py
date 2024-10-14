@@ -9,5 +9,5 @@ class ModelState:
         self.models: List[LocalModel] = []  # List to hold the LocalModel instances
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Create a singleton instance
+# singleton instance
 model_state = ModelState()
