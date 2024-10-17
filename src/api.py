@@ -4,12 +4,12 @@ from huggingface_hub import hf_hub_download, model_info
 from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from state import model_state  # Import the state management
-from llama_cpp import Llama
+#from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
 import os
 from typing import List
-from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files
+from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
 from config import config
 import torch
 import shutil
@@ -24,7 +24,7 @@ async def startup_event():
     print(f"Server port: {config.PORT}")
     print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
     print(f"Device is configured to use {model_state.device}")
-    # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
+    print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
         print("WARNING: You need to set your Hugging Face API token to download models.")
@@ -110,6 +110,7 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
     if os.path.exists(model_path):
         existing_files = os.listdir(model_path)
         if len(existing_files) >= 2:
+            model_state.is_downloading = False
             return {"status": "Download not started.", "message": f"Model '{model_name}' is already downloaded to '{model_path}'."}
 
 
@@ -152,7 +153,7 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
                 except Exception as e:
                     error_message = f"Error downloading {file.rfilename}: {str(e)}"
                     model_state.download_progress["error"] = error_message
-
+                    
                     # for clients that fully support SEE
                     yield f"data: {json.dumps(model_state.download_progress)}\n\n"
                     raise
@@ -204,7 +205,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     
     # Load model and tokenizer based on the model type
     if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
-        model = get_model_type(requested_model_type).from_pretrained(model_path).to(model_state.device)
+        model = get_model_type(requested_model_type).from_pretrained(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         trans_pipeline = pipeline(
@@ -215,29 +216,33 @@ async def mount_model(request: MountModelRequest) -> dict:
             tgt_lang=request.target_language
         )
 
-    elif requested_model_type == "text-generation":
-        model = get_model_type(requested_model_type).from_pretrained(model_path).to(model_state.device)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        
-        trans_pipeline = pipeline(
-            requested_model_type,
-            model=model,
-            tokenizer=tokenizer,
-        )
+    elif requested_model_type == "text-generation":        
+        try:    
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)        
+            model = get_model_type(requested_model_type).from_pretrained(model_path, trust_remote_code=True)
+                
+            trans_pipeline = pipeline(
+                requested_model_type,
+                model=model,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                tokenizer=tokenizer, trust_remote_code=True)
+        except Exception as ex:
+            print(f"Exception: {ex}")
 
-    elif requested_model_type == "llama":
-        gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
-        if not gguf_files:
-            raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
+    # elif requested_model_type == "llama":
+    #     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+    #     if not gguf_files:
+    #         raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
         
-        filename = os.path.basename(gguf_files[0])
-        model = Llama.from_pretrained(
-            repo_id=model_name,
-            filename=filename,
-            local_dir=model_path
-        )
-        tokenizer = None 
-        trans_pipeline = None
+    #     filename = os.path.basename(gguf_files[0])
+    #     model = Llama.from_pretrained(
+    #         repo_id=model_name,
+    #         filename=filename,
+    #         local_dir=model_path
+    #     )
+    #     tokenizer = None 
+    #     trans_pipeline = None
 
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
@@ -372,22 +377,13 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     # Determine the result_type
     result_type = text_generation_request.result_type or 'raw'  # Default to 'raw' if None or empty
     if result_type == 'raw':
-        # Return the raw response
-        return generated_results
+        if isinstance(generated_results, list):
+            return {"generated_results": generated_results}  # Wrap the list in a dict
+        else:
+            return {"generated_results": [generated_results]}  # Ensure it's in a list if not already
     elif result_type == 'assistant':
-        # Extract the assistant's response
-        if model_to_use.model_type == "llama":
-            assistant_response = generated_results['choices'][0]['message']['content']
-        else:    
-            if isinstance(generated_results, list) and len(generated_results) > 0:
-                first_result = generated_results[0]
-                if isinstance(first_result, dict) and 'generated_text' in first_result:
-                    assistant_response = first_result['generated_text']
-                elif isinstance(first_result, dict) and 'choices' in first_result:
-                    assistant_response = first_result['choices'][0]['text']
-                else:
-                    assistant_response = str(first_result)
-        return {"assistant_response": assistant_response}  # Return only the assistant response
+        assistant_response = extract_assistant_response(generated_results)
+        return {"assistant_response": assistant_response}       
     else:
         raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
 

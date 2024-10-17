@@ -1,5 +1,5 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from llama_cpp import Llama
+#from llama_cpp import Llama
 from config import config
 import os
 import shutil
@@ -12,7 +12,7 @@ import json
 SUPPORTED_MODEL_TYPES = {     
     'sequence-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
-    'llama': Llama
+    #'llama': Llama
 }
 
 # Function to get model type based on task
@@ -21,8 +21,8 @@ def get_model_type(task: str):
         return SUPPORTED_MODEL_TYPES['sequence-generation']
     elif task in ['text-generation']:
         return SUPPORTED_MODEL_TYPES['text-generation']
-    elif task in ['llama']:
-        return SUPPORTED_MODEL_TYPES['llama']
+    # elif task in ['llama']:
+    #     return SUPPORTED_MODEL_TYPES['llama']
     else:
         raise ValueError(f"Unsupported task: {task}")
     
@@ -34,6 +34,8 @@ def extract_assistant_response(response):
     Assumes the structure contains a list where each entry may have a 'role' and 'content'.
     """
     # Assuming the response has a 'generated_text' key referring to a list of responses
+    if isinstance(response, list) and len(response) > 0:
+        response = response[0]
     if isinstance(response, dict) and 'generated_text' in response:
         generated_text_list = response['generated_text']
         
@@ -43,8 +45,8 @@ def extract_assistant_response(response):
             if assistant_responses:
                 # Return the content of the last assistant's response
                 return assistant_responses[-1].get('content', '')
-    
-    return None
+  
+    return str(response)
 
 
 # Function to move snapshot files to the model path
