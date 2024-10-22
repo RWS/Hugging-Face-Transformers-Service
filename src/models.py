@@ -60,15 +60,6 @@ class MountModelRequest(BaseModel):
             }
         }
 
-class TranslationResponse(BaseModel):
-    translated_text: Union[str, List[str]] = Field(
-        description="The translated text from the model, either as a string or a list of strings.",
-        example="Il gatto è sul tavolo."
-    )
-
-    class Config:
-        protected_namespaces = ()  # Disable protected namespaces  
-
 class GeneratedResponse(BaseModel):
     generated_response: Union[str, List[str]] = Field(
         description="The generated text from the model based on the provided prompt, either as a string or a list of strings.",

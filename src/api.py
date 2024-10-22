@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
-from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest, GeneratedResponse
+from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from state import model_state  # Import the state management
 #from llama_cpp import Llama
@@ -323,8 +323,8 @@ async def delete_model(request: ModelRequest) -> dict:
 @router.post("/translate/",
           summary="Translate Text",
           description="Translate input text using the specified translation model.",
-          response_model=TranslationResponse)
-async def translate(translation_request: TranslationRequest) -> TranslationResponse:
+          response_model=GeneratedResponse)
+async def translate(translation_request: TranslationRequest) -> GeneratedResponse:
     """Translate input text using the specified translation model."""
     
     # Find the corresponding translator model in the models list
@@ -339,7 +339,7 @@ async def translate(translation_request: TranslationRequest) -> TranslationRespo
         if isinstance(translated_text, list):
             translated_text = translated_text[0]['translation_text']
     
-        return TranslationResponse(translated_text=translated_text)
+        return GeneratedResponse(generated_response=translated_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during translation: {str(e)}")
 
@@ -355,14 +355,10 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
     model_to_use = next((model for model in model_state.models if model.model_name == text_generation_request.model_name), None)
     if not model_to_use:
         raise HTTPException(status_code=400, detail="The specified text generation model is not currently mounted.")
-
-    print(f"Max Tokens 1: {text_generation_request.max_tokens }")
-   
+    
     max_tokens = text_generation_request.max_tokens 
     if max_tokens <= 0:
         max_tokens = model_to_use.model.config.max_position_embeddings
-
-    print(f"Max Tokens 2: {max_tokens}")
 
     messages = text_generation_request.prompt
     try:
