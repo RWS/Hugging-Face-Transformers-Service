@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 
 class TranslationRequest(BaseModel):
@@ -61,13 +61,22 @@ class MountModelRequest(BaseModel):
         }
 
 class TranslationResponse(BaseModel):
-    translated_text: str = Field(
-        description="The generated text from the model based on the provided prompt.",
-        example="Il gatto è sul tavolo." 
-    )   
-    
+    translated_text: Union[str, List[str]] = Field(
+        description="The translated text from the model, either as a string or a list of strings.",
+        example="Il gatto è sul tavolo."
+    )
+
     class Config:
-        protected_namespaces = ()  # Disable protected namespaces     
+        protected_namespaces = ()  # Disable protected namespaces  
+
+class GeneratedResponse(BaseModel):
+    generated_response: Union[str, List[str]] = Field(
+        description="The generated text from the model based on the provided prompt, either as a string or a list of strings.",
+        example="Il gatto è sul tavolo."
+    )
+
+    class Config:
+        protected_namespaces = ()  # Disable protected namespaces          
 
 class ModelRequest(BaseModel):
     model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")

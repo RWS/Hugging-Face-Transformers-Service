@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
-from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest
+from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationResponse, TranslationRequest, GeneratedResponse
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from state import model_state  # Import the state management
 #from llama_cpp import Llama
@@ -324,7 +324,7 @@ async def delete_model(request: ModelRequest) -> dict:
           summary="Translate Text",
           description="Translate input text using the specified translation model.",
           response_model=TranslationResponse)
-async def translate(translation_request: TranslationRequest) -> dict:
+async def translate(translation_request: TranslationRequest) -> TranslationResponse:
     """Translate input text using the specified translation model."""
     
     # Find the corresponding translator model in the models list
@@ -347,8 +347,8 @@ async def translate(translation_request: TranslationRequest) -> dict:
 @router.post("/generate/",
           summary="Generate Text",
           description="Generate text based on the input prompt using the specified text generation model.",
-          response_model=dict)
-async def generate(text_generation_request: TextGenerationRequest) -> dict:
+          response_model=GeneratedResponse)
+async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
     
     # Find the corresponding text generation model in the models list
@@ -356,18 +356,26 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     if not model_to_use:
         raise HTTPException(status_code=400, detail="The specified text generation model is not currently mounted.")
 
+    print(f"Max Tokens 1: {text_generation_request.max_tokens }")
+   
+    max_tokens = text_generation_request.max_tokens 
+    if max_tokens <= 0:
+        max_tokens = model_to_use.model.config.max_position_embeddings
+
+    print(f"Max Tokens 2: {max_tokens}")
+
     messages = text_generation_request.prompt
     try:
         if model_to_use.model_type == "llama":
             generated_results = model_to_use.model.create_chat_completion(
                 messages=messages,
-                max_tokens=text_generation_request.max_tokens,
+                max_tokens=max_tokens,
                 temperature=text_generation_request.temperature
             )
         else:
             generated_results = model_to_use.pipeline(
                 messages,
-                max_length=text_generation_request.max_tokens,
+                max_length=max_tokens,
                 temperature=text_generation_request.temperature
             )
         print("Generated results:", generated_results)
@@ -378,12 +386,12 @@ async def generate(text_generation_request: TextGenerationRequest) -> dict:
     result_type = text_generation_request.result_type or 'raw'  # Default to 'raw' if None or empty
     if result_type == 'raw':
         if isinstance(generated_results, list):
-            return {"generated_results": generated_results}  # Wrap the list in a dict
+            return GeneratedResponse(generated_response=generated_results)
         else:
-            return {"generated_results": [generated_results]}  # Ensure it's in a list if not already
+            return GeneratedResponse(generated_response=[generated_results])
     elif result_type == 'assistant':
         assistant_response = extract_assistant_response(generated_results)
-        return {"assistant_response": assistant_response}       
+        return GeneratedResponse(generated_response=assistant_response)     
     else:
         raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
 
