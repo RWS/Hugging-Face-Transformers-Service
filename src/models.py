@@ -70,13 +70,20 @@ class GeneratedResponse(BaseModel):
         protected_namespaces = ()  # Disable protected namespaces          
 
 class ModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-
+    model_name: str = Field(
+        default="facebook/nllb-200-distilled-600M",
+        description="The Hugging Face model name"
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        description="The Hugging Face API key (optional). If provided, it will override the default token."
+    )
     class Config:
-        protected_namespaces = ()  
-        json_schema_extra  = {
+        protected_namespaces = ()
+        json_schema_extra = {
             "example": {
-                "model_name": "facebook/nllb-200-distilled-600M"
+                "model_name": "facebook/nllb-200-distilled-600M",
+                # "api_key": "your_huggingface_api_key_here"  # Optional
             }
         }
 

@@ -74,26 +74,34 @@ async def list_models() -> List[ModelInfo]:
     return models_info
 
 
-@router.post("/download_model/",
-             summary="Download a Model",
-             description="Initiates the download of a specified model from the Hugging Face Hub. "
-                         "If the model is already downloaded, it informs the user accordingly.",
-             response_model=dict,
-             responses={200: {
-                 "description": "Successful model download",
-                 "content": {
-                     "application/json": {
-                         "example": {
-                             "message": "Model 'facebook/nllb-200-distilled-600M' is already downloaded to 'C:/HuggingFace/model_cache/models--facebook/nllb-200-distilled-600M'."
-                         }
-                     }
-                 }},
-             400: {
-                 "description": "Error in model download due to invalid request or existing download."
-             }})
+@router.post(
+    "/download_model/",
+    summary="Download a Model",
+    description=(
+        "Initiates the download of a specified model from the Hugging Face Hub. "
+        "If the model is already downloaded, it informs the user accordingly."
+    ),
+    response_model=dict,
+    responses={
+        200: {
+            "description": "Successful model download",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Model 'facebook/nllb-200-distilled-600M' is already downloaded to 'C:/HuggingFace/model_cache/models--facebook/nllb-200-distilled-600M'."
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Error in model download due to invalid request or existing download."
+        }
+    }
+)
 async def download_model_endpoint(request: ModelRequest) -> dict:
     model_name = request.model_name
-   
+    api_key = request.api_key  # Retrieve the API key from the request
+
     if model_state.is_downloading:
         raise HTTPException(status_code=400, detail="A download is currently in progress.")
     
@@ -105,17 +113,20 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
         "files": []
     }
     
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
-
+    model_path = os.path.join(
+        config.DOWNLOAD_DIRECTORY,
+        "models--" + model_name.replace('/', '--')
+    )
     if os.path.exists(model_path):
         existing_files = os.listdir(model_path)
         if len(existing_files) >= 2:
             model_state.is_downloading = False
-            return {"status": "Download not started.", "message": f"Model '{model_name}' is already downloaded to '{model_path}'."}
-
-
+            return {
+                "status": "Download not started.",
+                "message": f"Model '{model_name}' is already downloaded to '{model_path}'."
+            }
+                
     model_state.download_progress["status"] = "Download started."
-
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     
@@ -133,11 +144,17 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
 
             for index, file in enumerate(filtered_files):
                 try:
-                    file_path = hf_hub_download(repo_id=model_name, 
-                                                filename=file.rfilename, 
-                                                cache_dir=config.DOWNLOAD_DIRECTORY, 
-                                                force_download=True,
-                                                token=config.HUGGINGFACE_TOKEN)
+                    # Determine which token to use
+                    token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
+
+                    file_path = hf_hub_download(
+                        repo_id=model_name,
+                        filename=file.rfilename,
+                        cache_dir=config.DOWNLOAD_DIRECTORY,
+                        force_download=True,
+                        token=token_to_use  # Use the appropriate token
+                    )
+                    
                     progress_update = {
                         "file_name": file.rfilename,
                         "index": index + 1,
