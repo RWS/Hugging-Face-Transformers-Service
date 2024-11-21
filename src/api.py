@@ -36,37 +36,73 @@ async def shutdown_event():
     print("Shutting down the server.")
 
 
-@router.get("/list_models/",
-          response_model=List[ModelInfo],
-          summary="List downloaded models",
-          response_description="A list of models available in the cache.",
-          responses={200: {"content": {"application/json": {"example": [{"model_name": "microsoft/Phi-3.5-mini-instruct", "model_mounted": "True", "model_type": "text-generation", "model_size_bytes": "7.12 GB"}]}}}})
+@router.get(
+    "/list_models/",
+    response_model=List[ModelInfo],
+    summary="List downloaded models",
+    response_description="A list of models available in the cache.",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "model_name": "microsoft/Phi-3.5-mini-instruct",
+                            "model_type": "text-generation",
+                            "model_mounted": True,
+                            "model_size_bytes": "7.12 GB",
+                            "properties": {
+                                "src_lang": "eng_Latn",
+                                "tgt_lang": "ita_Latn"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
 async def list_models() -> List[ModelInfo]:
-    """List all downloaded models along with their types and sizes."""
-    
+    """List all downloaded models along with their types, sizes, and properties."""
+   
     models_info = []
     try:
         # List directories in the cache directory to find downloaded models
-        model_dirs = [d for d in os.listdir(config.DOWNLOAD_DIRECTORY) if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))]
+        model_dirs = [
+            d for d in os.listdir(config.DOWNLOAD_DIRECTORY)
+            if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))
+        ]
         for model_dir in model_dirs:
             # Skip any directories that start with '.' or are named '.locks'
             if model_dir.startswith('.') or model_dir == '.locks':
                 continue
-            
+           
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name
             model_type = infer_model_type(model_dir)
             model_size = get_directory_size(model_path)  # Get the total size of the model directory
-            
+           
             # Format the model size as a human-readable string
             formatted_size = format_size(model_size)
-            is_mounted = any(model.model_name == model_name for model in model_state.models)  # Check if model is mounted
-            
+            is_mounted = any(
+                model.model_name == model_name for model in model_state.models
+            ) 
+           
+            # Retrieve properties from the mounted models
+            properties = {}
+            if is_mounted:
+                local_model = next(
+                    (model for model in model_state.models if model.model_name == model_name), None
+                )
+                if local_model:
+                    properties = local_model.properties
+           
             models_info.append({
                 "model_name": model_name,
                 "model_type": model_type,
                 "model_mounted": is_mounted,
-                "model_size_bytes": formatted_size
+                "model_size_bytes": formatted_size,
+                "properties": properties 
             })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
@@ -154,7 +190,7 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
                         force_download=True,
                         token=token_to_use  # Use the appropriate token
                     )
-                    
+
                     progress_update = {
                         "file_name": file.rfilename,
                         "index": index + 1,
@@ -194,17 +230,57 @@ async def get_progress() -> JSONResponse:
     return JSONResponse(content={"progress": model_state.download_progress})
 
 
-@router.post("/mount_model/",
-          summary="Mount a Model",
-          description="Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama'",
-          response_model=dict,
-          responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully."}}}}})
+@router.post(
+    "/mount_model/",
+    summary="Mount a Model",
+    description=(
+        "Mount the specified model and setup the appropriate pipeline. "
+        "Supported model types: 'translation', 'text-generation'"
+    ),
+    response_model=dict,
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully.",
+                        "properties": {
+                            "src_lang": "eng_Latn",
+                            "tgt_lang": "ita_Latn"
+                        }
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Unsupported model type provided.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Unsupported model type provided."
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Model path does not exist.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Model path does not exist."
+                    }
+                }
+            }
+        }
+    }
+)
 async def mount_model(request: MountModelRequest) -> dict:   
     """Mount the specified model."""
     
     model_name = request.model_name
     requested_model_type = request.model_type
-    
+    properties = request.properties or {}
+
     # Check if the model is already mounted
     if any(model.model_name == model_name for model in model_state.models):
         return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
@@ -218,20 +294,26 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     tokenizer = None
     model = None
-    trans_pipeline = None
+    trans_pipeline = None    
     
     # Load model and tokenizer based on the model type
     if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
-        model = get_model_type(requested_model_type).from_pretrained(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        
-        trans_pipeline = pipeline(
-            requested_model_type,
-            model=model,
-            tokenizer=tokenizer,
-            src_lang=request.source_language,
-            tgt_lang=request.target_language
-        )
+            model = get_model_type(requested_model_type).from_pretrained(model_path)
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+           
+            # Dynamically add all non-null properties to pipeline_kwargs
+            pipeline_kwargs = {
+                "model": model,
+                "tokenizer": tokenizer
+            }
+            for key, value in properties.items():
+                if value is not None:
+                    pipeline_kwargs[key] = value
+           
+            trans_pipeline = pipeline(
+                requested_model_type,
+                **pipeline_kwargs
+            )
 
     elif requested_model_type == "text-generation":        
         try:    
@@ -241,9 +323,9 @@ async def mount_model(request: MountModelRequest) -> dict:
             trans_pipeline = pipeline(
                 requested_model_type,
                 model=model,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                tokenizer=tokenizer, trust_remote_code=True)
+                torch_dtype="auto",                
+                device_map="auto",                
+                tokenizer=tokenizer)
         except Exception as ex:
             print(f"Exception: {ex}")
 
@@ -264,11 +346,24 @@ async def mount_model(request: MountModelRequest) -> dict:
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
 
-    # Create a LocalModel instance and add it to the models list
-    local_model = LocalModel(model_name=model_name, model=model, model_type=requested_model_type, tokenizer=tokenizer, pipeline=trans_pipeline)
+    local_model = LocalModel(
+        model_name=model_name,
+        model=model,
+        model_type=requested_model_type,
+        tokenizer=tokenizer,
+        pipeline=trans_pipeline,
+        properties=properties 
+    )
+
     model_state.models.append(local_model)
 
-    return {"message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."}
+    response = {
+        "message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."
+    }
+    if properties:
+        response["properties"] = properties
+    
+    return response
 
 
 @router.post("/unmount_model/",

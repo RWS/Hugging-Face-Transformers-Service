@@ -44,19 +44,32 @@ class TextGenerationRequest(BaseModel):
         }
 
 class MountModelRequest(BaseModel):
-    model_name: str = Field(default="facebook/nllb-200-distilled-600M", description="The Hugging Face model name")
-    model_type: str = Field(default="translation", description="Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama'.")
-    source_language: Optional[str] = Field(default="eng_Latn", description="[Optional] Language code for the source language (e.g., 'eng_Latn' for English).")
-    target_language: Optional[str] = Field(default="ita_Latn", description="[Optional] Language code for the target language (e.g., 'ita_Latn' for Italian).")
-
+    model_name: str = Field(
+        default="facebook/nllb-200-distilled-600M",
+        description="The Hugging Face model name."
+    )
+    model_type: str = Field(
+        default="translation",
+        description=(
+            "Type of model to mount. Supported model types: "
+            "'translation', 'text2text-generation', 'text-generation', 'llama'."
+        )
+    )
+    properties: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional dictionary of additional properties (e.g., src_lang, tgt_lang)."
+    )
+    
     class Config:
-        protected_namespaces = ()  
-        json_schema_extra  = {
+        protected_namespaces = ()
+        json_schema_extra = {
             "example": {
                 "model_name": "facebook/nllb-200-distilled-600M",
                 "model_type": "translation",
-                "source_language": "eng_Latn",
-                "target_language": "ita_Latn"
+                "properties": {
+                    "src_lang": "eng_Latn",
+                    "tgt_lang": "ita_Latn"
+                }
             }
         }
 
@@ -90,19 +103,21 @@ class ModelRequest(BaseModel):
 class ModelInfo(BaseModel):
     model_name: str
     model_type: str
-    model_mounted: bool  # Boolean type
+    model_mounted: bool  
     model_size_bytes: str
+    properties: Dict[str, str] 
 
     class Config:
         protected_namespaces = ()  
 
 class LocalModel:
-    def __init__(self, model_name: str, model, model_type: str, tokenizer, pipeline):
+    def __init__(self, model_name: str, model, model_type: str, tokenizer, pipeline, properties: Optional[Dict[str, str]] = None):
         self.model_name = model_name
         self.model = model
         self.model_type = model_type
         self.tokenizer = tokenizer
         self.pipeline = pipeline
+        self.properties = properties or {}
 
     class Config:
         protected_namespaces = () 
