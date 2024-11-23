@@ -72,7 +72,8 @@ def move_snapshot_files(model_name, download_directory):
                     continue  
                 
                 shutil.move(source_path, model_path)
-            shutil.rmtree(snapshots_path)
+            shutil.rmtree(snapshots_path) 
+    pass   
 
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""

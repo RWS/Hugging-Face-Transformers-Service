@@ -1,22 +1,34 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
-from models import ModelRequest, ModelInfo, MountModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
+from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
-from state import model_state  # Import the state management
+from state import model_state
 #from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
 import os
-from typing import List
+from typing import Optional, Dict, List
 from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
 from config import config
 import torch
 import shutil
 import json
 import asyncio
+from connection_manager import ConnectionManager
+from concurrent.futures import ThreadPoolExecutor
+import logging
+from functools import partial
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+manager = ConnectionManager()
+model_states: Dict[str, Dict] = {}
+
+# Initialize a ThreadPoolExecutor
+executor = ThreadPoolExecutor(max_workers=5)
 
 @router.on_event("startup")
 async def startup_event():
@@ -120,11 +132,12 @@ async def list_models() -> List[ModelInfo]:
     response_model=dict,
     responses={
         200: {
-            "description": "Successful model download",
+            "description": "Successful model download initiation",
             "content": {
                 "application/json": {
                     "example": {
-                        "message": "Model 'facebook/nllb-200-distilled-600M' is already downloaded to 'C:/HuggingFace/model_cache/models--facebook/nllb-200-distilled-600M'."
+                        "message": "Model download started.",
+                        "model_path": "C:/HuggingFace/model_cache/models--facebook/nllb-200-distilled-600M"
                     }
                 }
             }
@@ -134,21 +147,29 @@ async def list_models() -> List[ModelInfo]:
         }
     }
 )
-async def download_model_endpoint(request: ModelRequest) -> dict:
+async def download_model_endpoint(request: DownloadModelRequest, background_tasks: BackgroundTasks) -> dict:
+    client_id = request.client_id
     model_name = request.model_name
-    api_key = request.api_key  # Retrieve the API key from the request
+    api_key = request.api_key 
 
-    if model_state.is_downloading:
-        raise HTTPException(status_code=400, detail="A download is currently in progress.")
-    
-    model_state.is_downloading = True
-    model_state.download_progress = {
-        "status": "Starting...",
-        "message": "",
-        "error": None,
-        "files": []
+    logger.info(f"Received download request from client_id: {client_id} for model: {model_name}")
+
+    # Check if the client has an active download
+    if model_states.get(client_id, {}).get("is_downloading"):
+        logger.warning(f"Client {client_id} already has an active download.")
+        raise HTTPException(status_code=400, detail="A download is currently in progress for this client.")
+
+    # Initialize the model state for this client
+    model_states[client_id] = {
+        "is_downloading": True,
+        "download_progress": {
+            "status": "Starting...",
+            "message": "",
+            "error": None,
+            "files": []
+        }
     }
-    
+
     model_path = os.path.join(
         config.DOWNLOAD_DIRECTORY,
         "models--" + model_name.replace('/', '--')
@@ -156,78 +177,126 @@ async def download_model_endpoint(request: ModelRequest) -> dict:
     if os.path.exists(model_path):
         existing_files = os.listdir(model_path)
         if len(existing_files) >= 2:
-            model_state.is_downloading = False
+            model_states[client_id]["is_downloading"] = False
+            logger.info(f"Model '{model_name}' already downloaded for client {client_id}.")
             return {
                 "status": "Download not started.",
                 "message": f"Model '{model_name}' is already downloaded to '{model_path}'."
             }
-                
-    model_state.download_progress["status"] = "Download started."
+
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
-    
-    async def generate_progress():
-        """Helper function to yield download progress."""    
-        try:        
-            info = model_info(model_name)
-            files = info.siblings            
-            filtered_files = filter_unwanted_files(files)
-            total_files = len(filtered_files)
+    logger.info(f"Download directory ensured at {config.DOWNLOAD_DIRECTORY}")
 
-            model_state.download_progress["total_files"] = total_files            
-            model_state.download_progress["status"] = "Downloading"
-            model_state.download_progress["message"] = f"Downloaded {0} of {total_files}"
+    # Start the download in a background task
+    background_tasks.add_task(download_model, client_id, model_name, api_key)
 
-            for index, file in enumerate(filtered_files):
-                try:
-                    # Determine which token to use
-                    token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
+    logger.info(f"Download initiated for client {client_id}.")
 
-                    file_path = hf_hub_download(
+    return {
+        "status": "Download started.",
+        "message": f"Model '{model_name}' is being downloaded."
+    }
+
+async def download_model(client_id: str, model_name: str, api_key: Optional[str]):
+    try:
+        logger.info(f"Starting download process for client {client_id}, model {model_name}")
+        model_state = model_states[client_id]
+        model_state["download_progress"]["status"] = "Download started."
+
+        # Fetch model information in a separate thread to avoid blocking
+        info = await asyncio.get_event_loop().run_in_executor(executor, lambda: model_info(model_name))
+        files = info.siblings
+        filtered_files = filter_unwanted_files(files)
+        total_files = len(filtered_files)
+        model_state["download_progress"].update({
+            "status": "Downloading",
+            "message": f"Downloaded 0 of {total_files}",
+            "files": []
+        })
+        logger.info(f"Model {model_name} has {total_files} files to download.")
+
+        for index, file in enumerate(filtered_files):
+            try:
+                logger.info(f"Client {client_id}: Downloading file {file.rfilename} ({index + 1}/{total_files})")
+                
+                token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
+
+                # Download the file in a separate thread with named arguments using partial
+                file_path = await asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    partial(
+                        hf_hub_download,
                         repo_id=model_name,
                         filename=file.rfilename,
                         cache_dir=config.DOWNLOAD_DIRECTORY,
                         force_download=True,
-                        token=token_to_use  # Use the appropriate token
+                        token=token_to_use
                     )
+                )
+                logger.info(f"Client {client_id}: Successfully downloaded {file.rfilename}")
 
-                    progress_update = {
-                        "file_name": file.rfilename,
-                        "index": index + 1,
-                        "total_files": total_files
-                    }
+                progress_update = {
+                    "file_name": file.rfilename,
+                    "index": index + 1,
+                    "total_files": total_files
+                }
+                model_state["download_progress"]["files"].append(progress_update)
+                model_state["download_progress"]["message"] = f"Downloaded {index + 1} of {total_files}"
 
-                    model_state.download_progress["files"].append(progress_update)
-                    model_state.download_progress["message"] = f"Downloaded {index + 1} of {total_files}"
-                    
-                    # for clients that fully support SEE
-                    yield f"data: {json.dumps(progress_update)}\n\n"
-                    await asyncio.sleep(0.1)  # Simulated download delay
-                except Exception as e:
-                    error_message = f"Error downloading {file.rfilename}: {str(e)}"
-                    model_state.download_progress["error"] = error_message
-                    
-                    # for clients that fully support SEE
-                    yield f"data: {json.dumps(model_state.download_progress)}\n\n"
-                    raise
+                # Send progress update via WebSocket
+                await manager.send_message(client_id, json.dumps({
+                    "type": "file_downloaded",
+                    "data": progress_update
+                }))
 
-            model_state.download_progress["status"] = "Completed"
-            move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
-        finally:
-            model_state.is_downloading = False
-    
-    return StreamingResponse(generate_progress(), media_type="text/event-stream")
+            except Exception as e:
+                error_message = f"Error downloading {file.rfilename}: {str(e)}"
+                model_state["download_progress"]["error"] = error_message
+                logger.error(f"Client {client_id}: {error_message}")
+
+                # Send error message via WebSocket
+                await manager.send_message(client_id, json.dumps({
+                    "type": "error",
+                    "data": error_message
+                }))
+                break  # Stop downloading on error
+
+        if not model_state["download_progress"]["error"]:
+            model_state["download_progress"].update({
+                "status": "Completed",
+                "message": f"Downloaded {total_files} of {total_files}"
+            })
+            logger.info(f"Client {client_id}: Download completed successfully.")
+            await manager.send_message(client_id, json.dumps({
+                "type": "completed",
+                "data": f"Model '{model_name}' download completed."
+            }))
+
+            # Execute post-download tasks in a separate thread
+            await asyncio.get_event_loop().run_in_executor(
+                executor,
+                lambda: move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
+            )
+    finally:
+        model_state["is_downloading"] = False
+        logger.info(f"Client {client_id}: Download state reset.")
 
 
-@router.get("/download_progress/",
-          summary="Check Download Progress",
-          description="Polling method to fetch the current download progress of the model, if a download is in progress.")
-async def get_progress() -> JSONResponse:
-    """Returns the current download progress."""
-    if not model_state.is_downloading:
-        return JSONResponse(content={"message": "No download in progress"})
-    
-    return JSONResponse(content={"progress": model_state.download_progress})
+@router.websocket("/ws/progress/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(client_id, websocket)
+    logger.info(f"WebSocket connection established for client {client_id}")
+    try:
+        while True:
+            # Keep the connection alive.
+            await asyncio.sleep(10)
+    except WebSocketDisconnect:
+        await manager.disconnect(client_id)
+        logger.info(f"WebSocket connection closed for client {client_id}")
+
+
+
 
 
 @router.post(
@@ -414,7 +483,6 @@ async def delete_model(request: ModelRequest) -> dict:
         # Remove the model from the global models list
         model_state.models.remove(model_to_delete)
 
-    # Construct the model path
     model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
     if (not os.path.exists(model_path)):
         model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--')) 
@@ -431,7 +499,6 @@ async def delete_model(request: ModelRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"An error occurred while deleting the model: {str(e)}")
     
 
-# Translation API Endpoint
 @router.post("/translate/",
           summary="Translate Text",
           description="Translate input text using the specified translation model.",
@@ -439,7 +506,6 @@ async def delete_model(request: ModelRequest) -> dict:
 async def translate(translation_request: TranslationRequest) -> GeneratedResponse:
     """Translate input text using the specified translation model."""
     
-    # Find the corresponding translator model in the models list
     model_to_use = next((model for model in model_state.models if model.model_name == translation_request.model_name), None)
     if not model_to_use or not model_to_use.pipeline:
         raise HTTPException(status_code=400, detail="The specified translation model is not currently mounted.")
@@ -463,7 +529,6 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
 async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
     
-    # Find the corresponding text generation model in the models list
     model_to_use = next((model for model in model_state.models if model.model_name == text_generation_request.model_name), None)
     if not model_to_use:
         raise HTTPException(status_code=400, detail="The specified text generation model is not currently mounted.")
@@ -490,7 +555,6 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
 
-    # Determine the result_type
     result_type = text_generation_request.result_type or 'raw'  # Default to 'raw' if None or empty
     if result_type == 'raw':
         if isinstance(generated_results, list):
@@ -522,7 +586,6 @@ async def get_model_info(
     - Model configuration or model information.
     """
 
-    # Handle invalid return_type
     if return_type not in ["config", "info"]:
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
     

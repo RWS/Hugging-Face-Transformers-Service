@@ -82,7 +82,11 @@ class GeneratedResponse(BaseModel):
     class Config:
         protected_namespaces = ()  # Disable protected namespaces          
 
-class ModelRequest(BaseModel):
+class DownloadModelRequest(BaseModel):
+    client_id: str = Field(
+        ...,
+        description="Unique identifier for the client"
+    )
     model_name: str = Field(
         default="facebook/nllb-200-distilled-600M",
         description="The Hugging Face model name"
@@ -91,14 +95,30 @@ class ModelRequest(BaseModel):
         default=None,
         description="The Hugging Face API key (optional). If provided, it will override the default token."
     )
+
     class Config:
         protected_namespaces = ()
         json_schema_extra = {
             "example": {
+                "client_id": "unique_client_id_123",
                 "model_name": "facebook/nllb-200-distilled-600M",
                 # "api_key": "your_huggingface_api_key_here"  # Optional
             }
         }
+
+class ModelRequest(BaseModel):
+    model_name: str = Field(
+        default="facebook/nllb-200-distilled-600M",
+        description="The Hugging Face model name"
+    )
+
+    class Config:
+        protected_namespaces = ()
+        json_schema_extra = {
+            "example": {
+                "model_name": "facebook/nllb-200-distilled-600M"
+            }
+        }        
 
 class ModelInfo(BaseModel):
     model_name: str
