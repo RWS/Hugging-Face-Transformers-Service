@@ -386,8 +386,16 @@ async def mount_model(request: MountModelRequest) -> dict:
 
     elif requested_model_type == "text-generation":        
         try:    
-            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)        
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)  
+            if tokenizer.pad_token is None:
+                tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
+                print("pad_token was not set. Assigned pad_token to eos_token.")
+
             model = get_model_type(requested_model_type).from_pretrained(model_path, trust_remote_code=True)
+            
+            # Update model configuration with the pad_token_id
+            model.config.pad_token_id = tokenizer.pad_token_id
+            model.resize_token_embeddings(len(tokenizer))
                 
             trans_pipeline = pipeline(
                 requested_model_type,
