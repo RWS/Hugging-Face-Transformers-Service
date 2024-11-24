@@ -36,7 +36,7 @@ async def startup_event():
     print(f"Server port: {config.PORT}")
     print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
     print(f"Device is configured to use {model_state.device}")
-    print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
+    # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
         print("WARNING: You need to set your Hugging Face API token to download models.")
