@@ -366,7 +366,8 @@ async def mount_model(request: MountModelRequest) -> dict:
     trans_pipeline = None    
     
     # Load model and tokenizer based on the model type
-    if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
+    # if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
+    if requested_model_type in ('translation'):
             model = get_model_type(requested_model_type).from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
            
