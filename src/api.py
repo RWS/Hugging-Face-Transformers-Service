@@ -4,7 +4,7 @@ from huggingface_hub import hf_hub_download, model_info
 from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from state import model_state
-#from llama_cpp import Llama
+from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
 import os
@@ -366,7 +366,6 @@ async def mount_model(request: MountModelRequest) -> dict:
     trans_pipeline = None    
     
     # Load model and tokenizer based on the model type
-    # if requested_model_type in ('translation', 'text2text-generation', 'summarization'):
     if requested_model_type in ('translation'):
             model = get_model_type(requested_model_type).from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -406,21 +405,19 @@ async def mount_model(request: MountModelRequest) -> dict:
                 tokenizer=tokenizer)
         except Exception as ex:
             print(f"Exception: {ex}")
-
-    # elif requested_model_type == "llama":
-    #     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
-    #     if not gguf_files:
-    #         raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
+    elif requested_model_type == "llama":
+        gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+        if not gguf_files:
+            raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
         
-    #     filename = os.path.basename(gguf_files[0])
-    #     model = Llama.from_pretrained(
-    #         repo_id=model_name,
-    #         filename=filename,
-    #         local_dir=model_path
-    #     )
-    #     tokenizer = None 
-    #     trans_pipeline = None
-
+        filename = os.path.basename(gguf_files[0])
+        model = Llama.from_pretrained(
+            repo_id=model_name,
+            filename=filename,
+            local_dir=model_path
+        )
+        tokenizer = None 
+        trans_pipeline = None
     else:
         raise HTTPException(status_code=400, detail="Unsupported model type provided.")
 
@@ -537,16 +534,20 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
           response_model=GeneratedResponse)
 async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
-    
-    model_to_use = next((model for model in model_state.models if model.model_name == text_generation_request.model_name), None)
+       
+    model_to_use = next(
+        (model for model in model_state.models if model.model_name == text_generation_request.model_name), 
+        None
+    )
     if not model_to_use:
-        raise HTTPException(status_code=400, detail="The specified text generation model is not currently mounted.")
+        raise HTTPException(
+            status_code=400, 
+            detail="The specified text generation model is not currently mounted."
+        )
     
-    max_tokens = text_generation_request.max_tokens 
-    if max_tokens <= 0:
-        max_tokens = model_to_use.model.config.max_position_embeddings
-
+    max_tokens = text_generation_request.max_tokens
     messages = text_generation_request.prompt
+    
     try:
         if model_to_use.model_type == "llama":
             generated_results = model_to_use.model.create_chat_completion(
@@ -555,6 +556,9 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
                 temperature=text_generation_request.temperature
             )
         else:
+            if max_tokens <= 0:
+                # Fallback to model's max position embeddings if max_tokens is invalid
+                max_tokens = model_to_use.model.config.max_position_embeddings
             generated_results = model_to_use.pipeline(
                 messages,
                 max_length=max_tokens,
@@ -562,9 +566,13 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
             )
         print("Generated results:", generated_results)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating text: {str(e)}")
-
-    result_type = text_generation_request.result_type or 'raw'  # Default to 'raw' if None or empty
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error generating text: {str(e)}"
+        )
+    
+    result_type = text_generation_request.result_type or 'assistant'  # Default to 'assistant' if None or empty
+    
     if result_type == 'raw':
         if isinstance(generated_results, list):
             return GeneratedResponse(generated_response=generated_results)
@@ -572,9 +580,12 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
             return GeneratedResponse(generated_response=[generated_results])
     elif result_type == 'assistant':
         assistant_response = extract_assistant_response(generated_results)
-        return GeneratedResponse(generated_response=assistant_response)     
+        return GeneratedResponse(generated_response=assistant_response)    
     else:
-        raise HTTPException(status_code=400, detail="Invalid result_type specified. Use 'raw' or 'assistant'.")
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid result_type specified. Use 'raw' or 'assistant'."
+        )
 
 @router.get("/model_info/",
           summary="Retrieve model info",

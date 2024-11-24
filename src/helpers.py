@@ -1,5 +1,5 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
-#from llama_cpp import Llama
+from llama_cpp import Llama
 from config import config
 import os
 import shutil
@@ -12,17 +12,18 @@ import json
 SUPPORTED_MODEL_TYPES = {     
     'sequence-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM,
-    #'llama': Llama
+    'llama': Llama
 }
 
 # Function to get model type based on task
+# Not supported with this release: 'text2text-generation', 'summarization'
 def get_model_type(task: str):
-    if task in ['translation', 'text2text-generation', 'summarization']:
+    if task in ['translation']:
         return SUPPORTED_MODEL_TYPES['sequence-generation']
     elif task in ['text-generation']:
         return SUPPORTED_MODEL_TYPES['text-generation']
-    # elif task in ['llama']:
-    #     return SUPPORTED_MODEL_TYPES['llama']
+    elif task in ['llama']:
+         return SUPPORTED_MODEL_TYPES['llama']
     else:
         raise ValueError(f"Unsupported task: {task}")
     
@@ -30,22 +31,38 @@ def get_model_type(task: str):
 
 def extract_assistant_response(response):
     """
-    Function to extract the most recent assistant response from a structured output.
-    Assumes the structure contains a list where each entry may have a 'role' and 'content'.
+    Extracts the content from the first 'assistant' role in the response.
+
+    Supports different response structures to ensure compatibility with various LLMs.
     """
-    # Assuming the response has a 'generated_text' key referring to a list of responses
+    # Handle list responses by taking the first element
     if isinstance(response, list) and len(response) > 0:
         response = response[0]
-    if isinstance(response, dict) and 'generated_text' in response:
-        generated_text_list = response['generated_text']
+
+    if isinstance(response, dict):
+        # Handling for llama-cpp-python and similar models
+        if 'choices' in response:
+            choices = response['choices']
+            for choice in choices:
+                message = choice.get('message', {})
+                if message.get('role') == 'assistant':
+                    content = message.get('content')
+                    if content:
+                        return content.strip()
         
-        if isinstance(generated_text_list, list):
-            # Filter entries with role 'assistant'
-            assistant_responses = [entry for entry in generated_text_list if entry.get('role') == 'assistant']
-            if assistant_responses:
-                # Return the content of the last assistant's response
-                return assistant_responses[-1].get('content', '')
-  
+        # Handling for other models that use 'generated_text'
+        elif 'generated_text' in response:
+            generated_text = response.get('generated_text')
+            if isinstance(generated_text, list):
+                for entry in generated_text:
+                    if entry.get('role') == 'assistant':
+                        content = entry.get('content')
+                        if content:
+                            return content.strip()
+            elif isinstance(generated_text, str):
+                return generated_text.strip()
+
+    # Fallback: return the entire response as string if expected keys are missing
     return str(response)
 
 

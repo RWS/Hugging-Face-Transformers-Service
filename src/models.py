@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Union
+from typing import Union, List, Dict, Any, Optional
 
 
 class TranslationRequest(BaseModel):
@@ -74,13 +74,18 @@ class MountModelRequest(BaseModel):
         }
 
 class GeneratedResponse(BaseModel):
-    generated_response: Union[str, List[str]] = Field(
-        description="The generated text from the model based on the provided prompt, either as a string or a list of strings.",
-        example="Il gatto è sul tavolo."
+    generated_response: Union[str, List[Dict[str, Any]]] = Field(
+        description=(
+            "The generated text from the model based on the provided prompt. "
+            "It can be either a string (when 'assistant' response is requested) "
+            "or a list of dictionaries containing raw response data."
+        ),
+        example="Il gatto è sul tavolo.",
     )
-
+    
     class Config:
-        protected_namespaces = ()  # Disable protected namespaces          
+        # Disable protected namespaces if not required, otherwise remove or adjust as needed
+        protected_namespaces = ()      
 
 class DownloadModelRequest(BaseModel):
     client_id: str = Field(
