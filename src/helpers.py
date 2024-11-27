@@ -1,6 +1,5 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from llama_cpp import Llama
-from src.config import config
+from config import config
 import os
 import shutil
 import glob
@@ -8,22 +7,16 @@ import re
 import json
 
 
-# Supported model mappings
 SUPPORTED_MODEL_TYPES = {     
     'sequence-generation': AutoModelForSeq2SeqLM,
-    'text-generation': AutoModelForCausalLM,
-    'llama': Llama
+    'text-generation': AutoModelForCausalLM
 }
 
-# Function to get model type based on task
-# Not supported with this release: 'text2text-generation', 'summarization'
 def get_model_type(task: str):
     if task in ['translation']:
         return SUPPORTED_MODEL_TYPES['sequence-generation']
     elif task in ['text-generation']:
         return SUPPORTED_MODEL_TYPES['text-generation']
-    elif task in ['llama']:
-         return SUPPORTED_MODEL_TYPES['llama']
     else:
         raise ValueError(f"Unsupported task: {task}")
     
@@ -153,7 +146,8 @@ def infer_model_type(model_dir: str) -> str:
     # Final check: Look for llama compatible files with the *.gguf extension
     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
     if gguf_files:
-        return "llama"
+        # Note: these models will require llama_cpp integration; however still of type text-generation
+        return "text-generation" 
     
     return "unknown" 
 

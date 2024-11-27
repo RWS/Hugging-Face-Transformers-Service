@@ -59,6 +59,10 @@ class MountModelRequest(BaseModel):
         default=None,
         description="Optional dictionary of additional properties (e.g., src_lang, tgt_lang)."
     )
+    file_name: Optional[str] = Field(
+        default=None,
+        description="Specific *.gguf file name to mount for 'llama' model types."
+    )
     
     class Config:
         protected_namespaces = ()
@@ -69,7 +73,8 @@ class MountModelRequest(BaseModel):
                 "properties": {
                     "src_lang": "eng_Latn",
                     "tgt_lang": "ita_Latn"
-                }
+                },
+                "file_name": "Marco-o1-IQ2_M.gguf"  # Example for llama models
             }
         }
 
@@ -128,21 +133,43 @@ class ModelRequest(BaseModel):
 class ModelInfo(BaseModel):
     model_name: str
     model_type: str
-    model_mounted: bool  
+    model_mounted: bool
     model_size_bytes: str
-    properties: Dict[str, str] 
+    properties: Dict[str, str]
+    file_names: Optional[List[str]] = None  # lsit of *.gguf files
+    loaded_file_name: Optional[str] = None  # to identify the loaded gguf file
 
     class Config:
         protected_namespaces = ()  
 
 class LocalModel:
-    def __init__(self, model_name: str, model, model_type: str, tokenizer, pipeline, properties: Optional[Dict[str, str]] = None):
+    def __init__(
+        self, 
+        model_name: str, 
+        model, 
+        model_type: str, 
+        tokenizer, 
+        pipeline, 
+        properties: Optional[Dict[str, str]] = None,
+        file_name: Optional[str] = None  
+    ):
         self.model_name = model_name
         self.model = model
         self.model_type = model_type
         self.tokenizer = tokenizer
         self.pipeline = pipeline
         self.properties = properties or {}
+        self.file_name = file_name 
 
     class Config:
-        protected_namespaces = () 
+        protected_namespaces = ()
+
+class ModelInfoResponse(BaseModel):
+    model_name: str
+    config: Optional[dict] = None
+    message: Optional[str] = None
+    minimal_info: Optional[dict] = None
+    info: Optional[dict] = None
+
+    class Config:
+        protected_namespaces = ()

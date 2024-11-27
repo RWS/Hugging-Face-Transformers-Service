@@ -57,7 +57,7 @@ a = Analysis(
   optimize=0,
 )
 
-# Function to filter out system DLLs
+# filter out system DLLs
 def filter_system_dlls(binaries, system_dlls):
    filtered = []
    for binary in binaries:
@@ -66,14 +66,11 @@ def filter_system_dlls(binaries, system_dlls):
 		   filtered.append(binary)
    return filtered
 
-# Apply the system DLL filter
 a.binaries = filter_system_dlls(a.binaries, system_dlls)
 # logger.debug(f'Filtered binaries: {a.binaries}')
 
-# Create the PYZ archive
 pyz = PYZ(a.pure)
 
-# Create the EXE object without 'onefile=True' to ensure onedir mode
 exe = EXE(
   pyz,
   a.scripts,

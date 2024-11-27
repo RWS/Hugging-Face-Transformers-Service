@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
-from src.models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
-from src.state import model_state
-from src.connection_manager import ConnectionManager
-from src.helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
-from src.config import config
+from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
+from state import model_state
+from connection_manager import ConnectionManager
+from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
+from config import config
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from llama_cpp import Llama
 from huggingface_hub import HfApi
@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 manager = ConnectionManager()
 model_states: Dict[str, Dict] = {}
-
-# Initialize a ThreadPoolExecutor
 executor = ThreadPoolExecutor(max_workers=5)
 
 @router.on_event("startup")
@@ -66,7 +64,21 @@ async def shutdown_event():
                             "properties": {
                                 "src_lang": "eng_Latn",
                                 "tgt_lang": "ita_Latn"
-                            }
+                            },
+                            "file_names": None,
+                            "loaded_file_name": None  # No gguf file loaded
+                        },
+                        {
+                            "model_name": "bartowski/Marco-o1-GGUF",
+                            "model_type": "text-generation",
+                            "model_mounted": True,
+                            "model_size_bytes": "15.3 GB",
+                            "properties": {},
+                            "file_names": [
+                                "Marco-o1-IQ2_M.gguf",
+                                "Marco-o1-Another.gguf"
+                            ],
+                            "loaded_file_name": "Marco-o1-IQ2_M.gguf"  # Example of loaded gguf file
                         }
                     ]
                 }
@@ -75,11 +87,10 @@ async def shutdown_event():
     }
 )
 async def list_models() -> List[ModelInfo]:
-    """List all downloaded models along with their types, sizes, and properties."""
+    """List all downloaded models along with their types, sizes, properties, and loaded gguf files."""
    
     models_info = []
-    try:
-        # List directories in the cache directory to find downloaded models
+    try:    
         model_dirs = [
             d for d in os.listdir(config.DOWNLOAD_DIRECTORY)
             if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))
@@ -90,11 +101,9 @@ async def list_models() -> List[ModelInfo]:
                 continue
            
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
-            model_name = model_dir.replace('--', '/').replace("models/", "")  # Remove 'models/' and revert name
+            model_name = model_dir.replace('--', '/').replace("models/", "")  # Normalize model name
             model_type = infer_model_type(model_dir)
-            model_size = get_directory_size(model_path)  # Get the total size of the model directory
-           
-            # Format the model size as a human-readable string
+            model_size = get_directory_size(model_path)  # Calculate total size        
             formatted_size = format_size(model_size)
             is_mounted = any(
                 model.model_name == model_name for model in model_state.models
@@ -102,20 +111,30 @@ async def list_models() -> List[ModelInfo]:
            
             # Retrieve properties from the mounted models
             properties = {}
+            loaded_file_name = None 
             if is_mounted:
                 local_model = next(
                     (model for model in model_state.models if model.model_name == model_name), None
                 )
                 if local_model:
                     properties = local_model.properties
+                    loaded_file_name = local_model.file_name  # the loaded gguf file name
            
-            models_info.append({
-                "model_name": model_name,
-                "model_type": model_type,
-                "model_mounted": is_mounted,
-                "model_size_bytes": formatted_size,
-                "properties": properties 
-            })
+            file_names = None
+            if model_type == 'text-generation':
+                gguf_files_full = glob.glob(os.path.join(model_path, "*.[gG][gG][uU][fF]"))
+                gguf_files = [os.path.basename(f) for f in gguf_files_full]
+                file_names = gguf_files if gguf_files else None
+
+            models_info.append(ModelInfo(
+                model_name=model_name,
+                model_type=model_type,
+                model_mounted=is_mounted,
+                model_size_bytes=formatted_size,
+                properties=properties,
+                file_names=file_names,
+                loaded_file_name=loaded_file_name  # Include the loaded gguf file name
+            ))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
    
@@ -297,14 +316,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 
 
-
-
 @router.post(
     "/mount_model/",
     summary="Mount a Model",
     description=(
         "Mount the specified model and setup the appropriate pipeline. "
-        "Supported model types: 'translation', 'text-generation'"
+        "Supported model types: 'translation', 'text-generation'."
     ),
     response_model=dict,
     responses={
@@ -322,7 +339,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             }
         },
         400: {
-            "description": "Unsupported model type provided.",
+            "description": "Unsupported model type provided or invalid file_name for 'text-generation' model.",
             "content": {
                 "application/json": {
                     "example": {
@@ -332,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             }
         },
         404: {
-            "description": "Model path does not exist.",
+            "description": "Model path or specified gguf file does not exist.",
             "content": {
                 "application/json": {
                     "example": {
@@ -349,28 +366,31 @@ async def mount_model(request: MountModelRequest) -> dict:
     model_name = request.model_name
     requested_model_type = request.model_type
     properties = request.properties or {}
+    specified_file_name = request.file_name 
 
     # Check if the model is already mounted
     if any(model.model_name == model_name for model in model_state.models):
         return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
 
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
-    if (not os.path.exists(model_path)):
-        model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))    
+    # Construct the model path based on the model name
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))    
+    if not os.path.exists(model_path):
+        model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))    
     
-    if (not os.path.exists(model_path)):
+    if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
 
     tokenizer = None
     model = None
     trans_pipeline = None    
-    
-    # Load model and tokenizer based on the model type
-    if requested_model_type in ('translation'):
+
+    try:
+        # Load model and tokenizer based on the model type
+        if requested_model_type == 'translation':
             model = get_model_type(requested_model_type).from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
            
-            # Dynamically add all non-null properties to pipeline_kwargs
+            # Prepare pipeline keyword arguments
             pipeline_kwargs = {
                 "model": model,
                 "tokenizer": tokenizer
@@ -384,43 +404,54 @@ async def mount_model(request: MountModelRequest) -> dict:
                 **pipeline_kwargs
             )
 
-    elif requested_model_type == "text-generation":        
-        try:    
-            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)  
-            if tokenizer.pad_token is None:
-                tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
-                print("pad_token was not set. Assigned pad_token to eos_token.")
-
-            model = get_model_type(requested_model_type).from_pretrained(model_path, trust_remote_code=True)
-            
-            # Update model configuration with the pad_token_id
-            model.config.pad_token_id = tokenizer.pad_token_id
-            model.resize_token_embeddings(len(tokenizer))
+        elif requested_model_type == "text-generation":        
+            if specified_file_name:
+                # Verify that the specified *.gguf file exists and has a .gguf extension
+                gguf_file_path = os.path.join(model_path, specified_file_name)
+                if not os.path.exists(gguf_file_path):
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"The specified *.gguf file '{specified_file_name}' does not exist in the model directory."
+                    )
+                if not specified_file_name.lower().endswith(".gguf"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"The specified file '{specified_file_name}' does not have a '.gguf' extension."
+                    )
                 
-            trans_pipeline = pipeline(
-                requested_model_type,
-                model=model,
-                torch_dtype="auto",                
-                device_map="auto",                
-                tokenizer=tokenizer)
-        except Exception as ex:
-            print(f"Exception: {ex}")
-    elif requested_model_type == "llama":
-        gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
-        if not gguf_files:
-            raise HTTPException(status_code=404, detail="No .gguf file found in model directory.")
-        
-        filename = os.path.basename(gguf_files[0])
-        model = Llama.from_pretrained(
-            repo_id=model_name,
-            filename=filename,
-            local_dir=model_path,
-            verbose=False
-        )
-        tokenizer = None 
-        trans_pipeline = None
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported model type provided.")
+                # Load the text-generation model using llama_cpp
+                model = Llama.from_pretrained(
+                    repo_id=model_name,
+                    filename=specified_file_name,
+                    local_dir=model_path,
+                    verbose=False
+                )
+                                
+                trans_pipeline = None
+                tokenizer = None
+            else:
+                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)  
+                if tokenizer.pad_token is None:
+                    tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
+                    print("pad_token was not set. Assigned pad_token to eos_token.")
+
+                model = get_model_type(requested_model_type).from_pretrained(model_path, trust_remote_code=True)
+                
+                # Update model configuration with the pad_token_id
+                model.config.pad_token_id = tokenizer.pad_token_id
+                model.resize_token_embeddings(len(tokenizer))
+                    
+                trans_pipeline = pipeline(
+                    requested_model_type,
+                    model=model,
+                    torch_dtype="auto",                
+                    device_map="auto",                
+                    tokenizer=tokenizer)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported model type provided.")
+
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"Error loading model: {str(ex)}")
 
     local_model = LocalModel(
         model_name=model_name,
@@ -428,7 +459,8 @@ async def mount_model(request: MountModelRequest) -> dict:
         model_type=requested_model_type,
         tokenizer=tokenizer,
         pipeline=trans_pipeline,
-        properties=properties 
+        properties=properties,
+        file_name=specified_file_name if specified_file_name else None
     )
 
     model_state.models.append(local_model)
@@ -521,6 +553,8 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
     try:
         translated_text = model_to_use.pipeline(input_text)
         
+        print("Translation result:", translated_text)
+
         if isinstance(translated_text, list):
             translated_text = translated_text[0]['translation_text']
     
@@ -529,10 +563,12 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
         raise HTTPException(status_code=500, detail=f"Error during translation: {str(e)}")
 
 
-@router.post("/generate/",
-          summary="Generate Text",
-          description="Generate text based on the input prompt using the specified text generation model.",
-          response_model=GeneratedResponse)
+@router.post(
+    "/generate/",
+    summary="Generate Text",
+    description="Generate text based on the input prompt using the specified text generation model.",
+    response_model=GeneratedResponse
+)
 async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
        
@@ -550,7 +586,14 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
     messages = text_generation_request.prompt
     
     try:
-        if model_to_use.model_type == "llama":
+        # Determine if the model uses a .gguf file based on the file_name extension
+        is_llama_model = (
+            model_to_use.file_name is not None and
+            model_to_use.file_name.lower().endswith(".gguf")
+        )
+        
+        if is_llama_model:
+            # Use llama_cpp's method to generate text
             generated_results = model_to_use.model.create_chat_completion(
                 messages=messages,
                 max_tokens=max_tokens,
@@ -586,81 +629,110 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
         raise HTTPException(
             status_code=400, 
             detail="Invalid result_type specified. Use 'raw' or 'assistant'."
-        )
+        )        
 
-@router.get("/model_info/",
-          summary="Retrieve model info",
-          description="Retrieve either model configuration or model information.",
-          response_model=dict)
+
+@router.get(
+    "/model_info/",
+    summary="Retrieve model info",
+    description="Retrieve either model configuration or model information.",
+    response_model=ModelInfoResponse
+)
 async def get_model_info(
     model_name: str = Query(..., description="The name of the Hugging Face model"),
     return_type: str = Query(default="info", description="Specify 'config' to retrieve model configuration or 'info' to retrieve model information.")
 ):
     """
     Retrieve either model configuration or model information from HfApi.
-
+    
     Args:
     - model_name: Name of the model to load.
     - return_type: Either 'config' to return model configuration or 'info' to return model info from HfApi.
-
+    
     Returns:
     - Model configuration or model information.
     """
-
     if return_type not in ["config", "info"]:
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
-    
-    try:
 
-        if return_type == "config":
-            model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))
+    try:
+        if return_type == "config":            
+            model_dir = model_name.replace('/', '--')
+            model_path = os.path.join(config.DOWNLOAD_DIRECTORY, f"models--{model_dir}")
+
+            # First, look for 'config.json' in the model directory
             config_path = os.path.join(model_path, 'config.json')
             if os.path.exists(config_path):
-                model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace("/", "_"))
-                config_file = AutoConfig.from_pretrained(model_name)
+                # Load configuration from the local path
+                config_file = AutoConfig.from_pretrained(model_path)
                 
-                return {
-                    "model_name": model_name,
-                    "config": config_file.to_dict() 
-                }        
+                return ModelInfoResponse(
+                    model_name=model_name,
+                    config=config_file.to_dict()
+                )
             else:
-                gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
+                # If 'config.json' is not found, check for '*.gguf' files                
+                gguf_pattern = os.path.join(model_path, "*.[gG][gG][uU][fF]")
+                gguf_files_full = glob.glob(gguf_pattern)
+                
+                # Extract only the base file names
+                gguf_files = [os.path.basename(f) for f in gguf_files_full]
+                
                 model_type = "unknown"
-
                 if gguf_files:
-                    model_type = "llama" 
-
-                    return {
-                        "model_name": model_name,
-                        "message": "No configuration file found. Providing minimal information.",
-                        "minimal_info": {
+                    model_type = "text-generation"
+                
+                if model_type == "text-generation" and gguf_files:
+                    return ModelInfoResponse(
+                        model_name=model_name,
+                        message="No configuration file found. Providing minimal information.",
+                        minimal_info={
                             "supports_TensorFlow": hasattr(AutoModel, 'from_tf'),
                             "supports_pretrained": hasattr(AutoModel, 'from_pretrained'),
-                            "model_type": model_type  # Add the detected model type
+                            "model_type": model_type,
+                            "file_names": gguf_files
                         }
-                    }
-        else:            
+                    )
+                else:
+                    # If no 'config.json' and no '*.gguf' files, return unknown type
+                    return ModelInfoResponse(
+                        model_name=model_name,
+                        message="No configuration file or '*.gguf' files found. Providing minimal information.",
+                        minimal_info={
+                            "supports_TensorFlow": hasattr(AutoModel, 'from_tf'),
+                            "supports_pretrained": hasattr(AutoModel, 'from_pretrained'),
+                            "model_type": model_type,
+                            "file_names": gguf_files if gguf_files else []
+                        }
+                    )
+        
+        else: 
             api = HfApi()
             model_info = api.model_info(model_name)
-            return {
-                "model_name": model_name,
-                "info": {
-                    "model_id": model_info.modelId,
-                    "pipeline_tag" : model_info.pipeline_tag,
-                    "transformers_info" : model_info.transformers_info,
-                    "card_data" : model_info.card_data,
-                    "siblings" : model_info.siblings,
-                    "library_name" : model_info.library_name,
-                    "widget_data" : model_info.widget_data,
-                    "config" : model_info.config,
-                    "spaces" : model_info.spaces,
-                    "model_type": model_info.modelId.split('/')[-1],
-                    "architecture": model_info.pipeline_tag,
-                    "tags": model_info.tags,
-                    "downloads": model_info.downloads,
-                    "last_updated": model_info.lastModified,
-                    "safetensors" : model_info.safetensors
-                }
+            
+            info_dict = {
+                "model_id": model_info.modelId,
+                "pipeline_tag": model_info.pipeline_tag,
+                "transformers_info": model_info.transformers_info,
+                "card_data": model_info.card_data,
+                "siblings": model_info.siblings,
+                "library_name": model_info.library_name,
+                "widget_data": model_info.widget_data,
+                "config": model_info.config,
+                "spaces": model_info.spaces,
+                "architecture": model_info.pipeline_tag,
+                "tags": model_info.tags,
+                "downloads": model_info.downloads,
+                "last_updated": model_info.lastModified,
+                "safetensors": model_info.safetensors
             }
+        
+            model_type = model_info.pipeline_tag or "unknown"
+
+            return ModelInfoResponse(
+                model_name=model_name,
+                info=info_dict
+            )
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
