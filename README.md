@@ -28,9 +28,9 @@ The following model types are supported, allowing users to leverage state-of-the
 
 - **Translation**: Utilizes `AutoModelForSeq2SeqLM`, enabling users to perform translations between multiple languages seamlessly.
 
-- **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
+<!-- - **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
 
-- **Summarization**: Uses `AutoModelForSeq2SeqLM` to condense long pieces of text into shorter summaries, preserving the main points and overall meaning. This model is particularly useful for applications that require quick understanding of large documents or articles.
+- **Summarization**: Uses `AutoModelForSeq2SeqLM` to condense long pieces of text into shorter summaries, preserving the main points and overall meaning. This model is particularly useful for applications that require quick understanding of large documents or articles. -->
 
 - **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
 
