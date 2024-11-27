@@ -3,15 +3,15 @@
 
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
-	         Name="$(var.appName)"
-	         Language="1033"
+           Name="$(var.appName)"
+           Language="1033"
            Version="$(var.productVersion)"
-	         Manufacturer="$(var.manufacturer)"
-	         UpgradeCode="$(var.upgradeCode)">
+           Manufacturer="$(var.manufacturer)"
+           UpgradeCode="$(var.upgradeCode)">
 
     <Package InstallerVersion="200"
-		         Compressed="yes"
-		         InstallScope="perUser" />
+             Compressed="yes"
+             InstallScope="perMachine" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   AllowSameVersionUpgrades="yes"
@@ -22,7 +22,7 @@
     <UIRef Id="WixUI_MyInstallDir" />
 
     <Icon Id="icon.ico" SourceFile="icon.ico"/>
-    <Property Id="ARPPRODUCTICON" Value="icon.ico" />    
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
 
     <!-- Define properties for user inputs -->
     <Property Id="INSTALLFOLDER" Value="$(var.defaultInstallFolder)" />
@@ -33,7 +33,6 @@
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
 
-
     <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="ApplicationShortcutDesktop"/>
@@ -41,6 +40,14 @@
     </Feature>
 
     <InstallExecuteSequence>
+      <!-- VC_redist Installation -->
+      <Custom Action="Install_VCRedist_x86" Before="InstallFinalize">
+        NOT VCREDIST_X86_INSTALLED AND NOT REMOVE
+      </Custom>
+      <Custom Action="Install_VCRedist_x64" Before="InstallFinalize">
+        NOT VCREDIST_X64_INSTALLED AND NOT REMOVE
+      </Custom>
+
       <Custom Action="SaveUserConfigurationAction" After="InstallFinalize">NOT Installed</Custom>
     </InstallExecuteSequence>
 
@@ -56,6 +63,48 @@
         <Directory Id="ApplicationProgramsFolder" Name="$(var.appName)"/>
       </Directory>
     </Directory>
+  </Fragment>
+
+  <Fragment>
+    <!-- Include VC_redist Binaries -->
+    <Binary Id="VCRedist_x86" SourceFile="dependencies\VC_redist.x86.exe" />
+    <Binary Id="VCRedist_x64" SourceFile="dependencies\VC_redist.x64.exe" />
+  </Fragment>
+
+  <Fragment>
+    <Property Id="VCREDIST_X86_INSTALLED">
+      <RegistrySearch Id="VCRedist_x86_Search"
+                      Root="HKLM"
+                      Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86"
+                      Name="Installed"
+                      Type="raw" />
+    </Property>
+
+    <Property Id="VCREDIST_X64_INSTALLED">
+      <RegistrySearch Id="VCRedist_x64_Search"
+                      Root="HKLM"
+                      Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+                      Name="Installed"
+                      Type="raw" />
+    </Property>
+  </Fragment>
+
+  <Fragment>
+    <CustomAction Id="Install_VCRedist_x86"
+                  BinaryKey="VCRedist_x86"
+                  ExeCommand="/install /quiet /norestart"
+                  Execute="deferred"
+                  Return="check"
+                  Impersonate="no"
+                  HideTarget="yes" />
+
+    <CustomAction Id="Install_VCRedist_x64"
+                  BinaryKey="VCRedist_x64"
+                  ExeCommand="/install /quiet /norestart"
+                  Execute="deferred"
+                  Return="check"
+                  Impersonate="no"
+                  HideTarget="yes" />
   </Fragment>
 
   <Fragment>

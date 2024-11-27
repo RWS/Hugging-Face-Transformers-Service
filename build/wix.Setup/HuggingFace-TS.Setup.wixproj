@@ -3,7 +3,6 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">x86</Platform>
-    <ProductVersion>3.10</ProductVersion>
     <ProjectGuid>48096c24-6037-4685-8deb-33e3a0819832</ProjectGuid>
     <SchemaVersion>2.0</SchemaVersion>
     <OutputName>HuggingFace-TS.Setup</OutputName>

@@ -84,7 +84,11 @@ To deactivate:
 deactivate
 ```
 
-### Step 5: Install Required Packages
+### Step 5: Install Microsoft Visual C++ Redistributables
+
+These redistributables provide essential runtime components required by the application. You can download the latest supported versions directly from Microsoft's official [latest supported Visual C++ downloads](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
+
+### Step 6: Install Required Packages
 
 Install the dependencies listed in `requirements.txt`:
 
@@ -92,7 +96,7 @@ Install the dependencies listed in `requirements.txt`:
 pip install --no-cache-dir -r requirements.txt
 ```
 
-### Step 6: Configure Environment Variables
+### Step 7: Configure Environment Variables
 
 To connect to Hugging Face and manage model caching, you'll need to set up your environment variables.
 
@@ -122,7 +126,7 @@ PORT=8001
 
 Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the FastAPI application on the specified port.
 
-### Step 7: Start the FastAPI Server
+### Step 8: Start the FastAPI Server
 
 Run the FastAPI application:
 
@@ -130,7 +134,7 @@ Run the FastAPI application:
 python src/main.py
 ```
 
-### Step 8: Access Swagger API & Documentation
+### Step 9: Access Swagger API & Documentation
 
 You can interact with the API and test its endpoints by visiting:
 [http://localhost:8001/docs](http://localhost:8001/docs)
