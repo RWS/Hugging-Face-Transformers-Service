@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from config import config  # Load the configuration
-from api import router
+from src.config import config  # Load the configuration
+from src.api import router
 
 app = FastAPI(
     title="Hugging Face Transformers Service",

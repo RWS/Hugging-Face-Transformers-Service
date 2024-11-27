@@ -1,6 +1,6 @@
 from typing import List
 import torch
-from models import LocalModel 
+from src.models import LocalModel 
 
 class ModelState:
     def __init__(self):

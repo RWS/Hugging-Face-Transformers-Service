@@ -1,6 +1,6 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from llama_cpp import Llama
-from config import config
+from src.config import config
 import os
 import shutil
 import glob

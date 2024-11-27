@@ -1,21 +1,21 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_download, model_info
-from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
+from src.models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse
+from src.state import model_state
+from src.connection_manager import ConnectionManager
+from src.helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
+from src.config import config
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
-from state import model_state
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
 import os
 from typing import Optional, Dict, List
-from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
-from config import config
 import torch
 import shutil
 import json
 import asyncio
-from connection_manager import ConnectionManager
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from functools import partial
@@ -414,7 +414,8 @@ async def mount_model(request: MountModelRequest) -> dict:
         model = Llama.from_pretrained(
             repo_id=model_name,
             filename=filename,
-            local_dir=model_path
+            local_dir=model_path,
+            verbose=False
         )
         tokenizer = None 
         trans_pipeline = None
