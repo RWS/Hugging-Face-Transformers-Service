@@ -19,6 +19,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from functools import partial
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -146,7 +147,7 @@ async def list_models() -> List[ModelInfo]:
     summary="Download a Model",
     description=(
         "Initiates the download of a specified model from the Hugging Face Hub. "
-        "If the model is already downloaded, it informs the user accordingly."
+        "If the model is already downloaded, it overwrites existing files."
     ),
     response_model=dict,
     responses={
@@ -166,17 +167,27 @@ async def list_models() -> List[ModelInfo]:
         }
     }
 )
-async def download_model_endpoint(request: DownloadModelRequest, background_tasks: BackgroundTasks) -> dict:
+async def download_model_endpoint(
+    request: DownloadModelRequest,
+    background_tasks: BackgroundTasks
+) -> dict:
     client_id = request.client_id
     model_name = request.model_name
     api_key = request.api_key 
+    file_filter = request.file_filter
 
-    logger.info(f"Received download request from client_id: {client_id} for model: {model_name}")
+    logger.info(
+        f"Received download request from client_id: {client_id} "
+        f"for model: {model_name} with filter: {file_filter}"
+    )
 
     # Check if the client has an active download
     if model_states.get(client_id, {}).get("is_downloading"):
         logger.warning(f"Client {client_id} already has an active download.")
-        raise HTTPException(status_code=400, detail="A download is currently in progress for this client.")
+        raise HTTPException(
+            status_code=400,
+            detail="A download is currently in progress for this client."
+        )
 
     # Initialize the model state for this client
     model_states[client_id] = {
@@ -189,26 +200,18 @@ async def download_model_endpoint(request: DownloadModelRequest, background_task
         }
     }
 
-    model_path = os.path.join(
-        config.DOWNLOAD_DIRECTORY,
-        "models--" + model_name.replace('/', '--')
-    )
-    if os.path.exists(model_path):
-        existing_files = os.listdir(model_path)
-        if len(existing_files) >= 2:
-            model_states[client_id]["is_downloading"] = False
-            logger.info(f"Model '{model_name}' already downloaded for client {client_id}.")
-            return {
-                "status": "Download not started.",
-                "message": f"Model '{model_name}' is already downloaded to '{model_path}'."
-            }
-
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     logger.info(f"Download directory ensured at {config.DOWNLOAD_DIRECTORY}")
 
-    # Start the download in a background task
-    background_tasks.add_task(download_model, client_id, model_name, api_key)
+    # Start the download in a background task, passing the file_filter
+    background_tasks.add_task(
+        download_model,
+        client_id,
+        model_name,
+        api_key,
+        file_filter
+    )
 
     logger.info(f"Download initiated for client {client_id}.")
 
@@ -217,16 +220,51 @@ async def download_model_endpoint(request: DownloadModelRequest, background_task
         "message": f"Model '{model_name}' is being downloaded."
     }
 
-async def download_model(client_id: str, model_name: str, api_key: Optional[str]):
+async def download_model(
+    client_id: str,
+    model_name: str,
+    api_key: Optional[str],
+    file_filter: Optional[str] = None
+):
     try:
-        logger.info(f"Starting download process for client {client_id}, model {model_name}")
+        logger.info(
+            f"Starting download process for client {client_id}, model {model_name}"
+        )
         model_state = model_states[client_id]
         model_state["download_progress"]["status"] = "Download started."
 
         # Fetch model information in a separate thread to avoid blocking
-        info = await asyncio.get_event_loop().run_in_executor(executor, lambda: model_info(model_name))
+        info = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            lambda: model_info(model_name)
+        )
         files = info.siblings
-        filtered_files = filter_unwanted_files(files)
+
+        # Apply regex filter if provided
+        if file_filter:
+            try:
+                regex = re.compile(file_filter)
+                filtered_files = [f for f in files if regex.search(f.rfilename)]
+                logger.info(
+                    f"Applied filter '{file_filter}', "
+                    f"{len(filtered_files)} out of {len(files)} files selected."
+                )
+            except re.error as e:
+                error_message = f"Invalid regex pattern: {str(e)}"
+                model_state["download_progress"]["error"] = error_message
+                logger.error(f"Client {client_id}: {error_message}")
+
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "error",
+                        "data": error_message
+                    })
+                )
+                return
+        else:
+            filtered_files = filter_unwanted_files(files)
+
         total_files = len(filtered_files)
         model_state["download_progress"].update({
             "status": "Downloading",
@@ -237,7 +275,10 @@ async def download_model(client_id: str, model_name: str, api_key: Optional[str]
 
         for index, file in enumerate(filtered_files):
             try:
-                logger.info(f"Client {client_id}: Downloading file {file.rfilename} ({index + 1}/{total_files})")
+                logger.info(
+                    f"Client {client_id}: Downloading file "
+                    f"{file.rfilename} ({index + 1}/{total_files})"
+                )
                 
                 token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
 
@@ -249,11 +290,13 @@ async def download_model(client_id: str, model_name: str, api_key: Optional[str]
                         repo_id=model_name,
                         filename=file.rfilename,
                         cache_dir=config.DOWNLOAD_DIRECTORY,
-                        force_download=True,
+                        force_download=True, 
                         token=token_to_use
                     )
                 )
-                logger.info(f"Client {client_id}: Successfully downloaded {file.rfilename}")
+                logger.info(
+                    f"Client {client_id}: Successfully downloaded {file.rfilename}"
+                )
 
                 progress_update = {
                     "file_name": file.rfilename,
@@ -261,24 +304,30 @@ async def download_model(client_id: str, model_name: str, api_key: Optional[str]
                     "total_files": total_files
                 }
                 model_state["download_progress"]["files"].append(progress_update)
-                model_state["download_progress"]["message"] = f"Downloaded {index + 1} of {total_files}"
-
-                # Send progress update via WebSocket
-                await manager.send_message(client_id, json.dumps({
-                    "type": "file_downloaded",
-                    "data": progress_update
-                }))
+                model_state["download_progress"]["message"] = (
+                    f"Downloaded {index + 1} of {total_files}"
+                )
+               
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "file_downloaded",
+                        "data": progress_update
+                    })
+                )
 
             except Exception as e:
                 error_message = f"Error downloading {file.rfilename}: {str(e)}"
                 model_state["download_progress"]["error"] = error_message
                 logger.error(f"Client {client_id}: {error_message}")
-
-                # Send error message via WebSocket
-                await manager.send_message(client_id, json.dumps({
-                    "type": "error",
-                    "data": error_message
-                }))
+                
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "error",
+                        "data": error_message
+                    })
+                )
                 break  # Stop downloading on error
 
         if not model_state["download_progress"]["error"]:
@@ -287,10 +336,13 @@ async def download_model(client_id: str, model_name: str, api_key: Optional[str]
                 "message": f"Downloaded {total_files} of {total_files}"
             })
             logger.info(f"Client {client_id}: Download completed successfully.")
-            await manager.send_message(client_id, json.dumps({
-                "type": "completed",
-                "data": f"Model '{model_name}' download completed."
-            }))
+            await manager.send_message(
+                client_id,
+                json.dumps({
+                    "type": "completed",
+                    "data": f"Model '{model_name}' download completed."
+                })
+            )
 
             # Execute post-download tasks in a separate thread
             await asyncio.get_event_loop().run_in_executor(
@@ -300,7 +352,7 @@ async def download_model(client_id: str, model_name: str, api_key: Optional[str]
     finally:
         model_state["is_downloading"] = False
         logger.info(f"Client {client_id}: Download state reset.")
-
+    
 
 @router.websocket("/ws/progress/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):

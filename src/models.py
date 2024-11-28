@@ -105,15 +105,55 @@ class DownloadModelRequest(BaseModel):
         default=None,
         description="The Hugging Face API key (optional). If provided, it will override the default token."
     )
-
+    file_filter: Optional[str] = Field(
+        default=None,
+        description="Optional regex pattern to filter which files to download."
+    )
     class Config:
         protected_namespaces = ()
         json_schema_extra = {
-            "example": {
-                "client_id": "unique_client_id_123",
-                "model_name": "facebook/nllb-200-distilled-600M",
-                # "api_key": "your_huggingface_api_key_here"  # Optional
-            }
+            "examples": [
+                {
+                    "summary": "Download only the second gguf file (Q2)",
+                    "value": {
+                        "client_id": "unique_client_id_123",
+                        "model_name": "facebook/nllb-200-distilled-600M",
+                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q2_K_M\\.gguf$"
+                    }
+                },
+                {
+                    "summary": "Download multiple specific files (Q1 and Q5)",
+                    "value": {
+                        "client_id": "unique_client_id_456",
+                        "model_name": "facebook/nllb-200-distilled-600M",
+                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q[15]_K_M\\.gguf$"
+                    }
+                },
+                {
+                    "summary": "Download all gguf files with even Q numbers (Q2, Q4)",
+                    "value": {
+                        "client_id": "unique_client_id_789",
+                        "model_name": "facebook/nllb-200-distilled-600M",
+                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q[24]_K_M\\.gguf$"
+                    }
+                },
+                {
+                    "summary": "Download all gguf files regardless of Q number",
+                    "value": {
+                        "client_id": "unique_client_id_321",
+                        "model_name": "facebook/nllb-200-distilled-600M",
+                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q\\d+_K_M\\.gguf$"
+                    }
+                },
+                {
+                    "summary": "Download all gguf files except Q9",
+                    "value": {
+                        "client_id": "unique_client_id_987",
+                        "model_name": "facebook/nllb-200-distilled-600M",
+                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q(?!9)_K_M\\.gguf$"
+                    }
+                }
+            ]
         }
 
 class ModelRequest(BaseModel):

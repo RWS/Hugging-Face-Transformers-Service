@@ -80,31 +80,70 @@ def extract_assistant_response(response):
     return str(response)
 
 
-# Function to move snapshot files to the model path
-def move_snapshot_files(model_name, download_directory):
+def move_snapshot_files(model_name: str, download_directory: str):
     """Move snapshot files from the downloaded model's snapshots directory to its root."""
     model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
     snapshots_path = os.path.join(model_path, "snapshots")
-
+    
     if os.path.exists(snapshots_path):
+        logger.info(f"Processing snapshots for model: {model_name}")
+        
+        # Iterate over items in the model_path
         for item in os.listdir(model_path):
             item_path = os.path.join(model_path, item)
-            if item != 'snapshots' and os.path.exists(item_path):
-                shutil.rmtree(item_path)  
-
+            
+            # Skip the 'snapshots' directory
+            if item == 'snapshots':
+                continue
+            
+            if os.path.isdir(item_path):
+                # If it's a directory, remove it and its contents
+                try:
+                    shutil.rmtree(item_path)
+                    logger.info(f"Removed directory: {item_path}")
+                except Exception as e:
+                    logger.error(f"Failed to remove directory {item_path}: {e}")
+            elif os.path.isfile(item_path):
+                # If it's a file, remove it
+                try:
+                    os.remove(item_path)
+                    logger.info(f"Removed file: {item_path}")
+                except Exception as e:
+                    logger.error(f"Failed to remove file {item_path}: {e}")
+            else:
+                logger.warning(f"Skipped unknown item type: {item_path}")
+        
+        # Handle snapshot directories
         snapshot_dirs = glob.glob(os.path.join(snapshots_path, '*'))
         if snapshot_dirs:
-            first_snapshot = snapshot_dirs[0]  
+            first_snapshot = snapshot_dirs[0] 
+            logger.info(f"Moving files from snapshot: {first_snapshot}")
+            
             for item in os.listdir(first_snapshot):
                 source_path = os.path.join(first_snapshot, item)
                 destination_path = os.path.join(model_path, item)
-
-                if os.path.exists(destination_path):
-                    continue  
                 
-                shutil.move(source_path, model_path)
-            shutil.rmtree(snapshots_path) 
-    pass   
+                # Skip if the destination already exists
+                if os.path.exists(destination_path):
+                    logger.info(f"Destination already exists, skipping: {destination_path}")
+                    continue
+                
+                try:
+                    shutil.move(source_path, destination_path)
+                    logger.info(f"Moved {source_path} to {destination_path}")
+                except Exception as e:
+                    logger.error(f"Failed to move {source_path} to {destination_path}: {e}")
+            
+            # Remove the snapshots directory after moving files
+            try:
+                shutil.rmtree(snapshots_path)
+                logger.info(f"Removed snapshots directory: {snapshots_path}")
+            except Exception as e:
+                logger.error(f"Failed to remove snapshots directory {snapshots_path}: {e}")
+    else:
+        logger.warning(f"No snapshots directory found for model: {model_name}")
+
+
 
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
