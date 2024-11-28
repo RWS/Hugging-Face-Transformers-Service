@@ -5,11 +5,33 @@ import shutil
 import glob
 import re
 import json
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 SUPPORTED_MODEL_TYPES = {     
     'sequence-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM
+}
+
+SUPPORTED_PIPELINES = {
+    "text-generation",
+    "text2text-generation",
+    "summarization",
+    "translation"
+}
+
+# Used to infer the model type from the model_type property in the config file 
+# when readme is not present and/or not defined in the pipeline or tags
+# This is not meant to be a definitive list
+MODEL_TYPE_MAPPING = {
+    "m2m_100": "translation",
+    "marian": "translation",
+    "mbart": "translation",
+    "mistral": "text-generation",
+    "qwen2": "text-generation",
+    "t5": "translation",   
 }
 
 def get_model_type(task: str):
@@ -20,7 +42,6 @@ def get_model_type(task: str):
     else:
         raise ValueError(f"Unsupported task: {task}")
     
-
 
 def extract_assistant_response(response):
     """
@@ -95,61 +116,81 @@ def filter_unwanted_files(files):
         if file.rfilename not in unwanted_files and '/' not in file.rfilename and '\\' not in file.rfilename
     ]
 
-def infer_model_type(model_dir: str) -> str:
-    """Infer model type based on the 'config.json' or 'README.md' contents."""
+
+def infer_model_type(model_dir: str, download_directory: str) -> str:
+    """
+    Infer model type based on the presence of *.gguf files, 'README.md', or 'config.json'.
     
-    model_cache_dir = config.DOWNLOAD_DIRECTORY
-    model_path = os.path.join(model_cache_dir, model_dir)
-   
+    Priority: 
+    1. Parse 'README.md' for 'pipeline_tag' or 'tags'.
+    2. Check for *.gguf files (indicates 'text-generation').
+    3. Parse 'config.json' for 'model_type'.
+    
+    Parameters:
+    - model_dir (str): The directory name of the model.
+    - download_directory (str): The base path where models are stored.
+    
+    Returns:
+    - str: The inferred model type or 'unknown' if unable to determine.
+    """
+    model_path = os.path.join(download_directory, model_dir)
+
+    # Parse README.md
     readme_path = os.path.join(model_path, 'README.md')
-
-    # Check the README for specific information
     if os.path.exists(readme_path):
-        with open(readme_path, 'r', encoding='utf-8') as f:
-            readme_content = f.read()
-            
-            # Use regex to find the pipeline_tag value
-            pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content)
-            if pipeline_tag_match:
-                pipeline_tag_value = pipeline_tag_match.group(1).strip()                         
-                if pipeline_tag_value in ("text-generation", "text2text-generation", "summarization", "translation"):
-                    return pipeline_tag_value
+        try:
+            with open(readme_path, 'r', encoding='utf-8') as f:
+                readme_content = f.read()
                 
-            # Search for tags specifically
-            tags_match = re.search(r'tags:\s*-\s*([\w-]+(?:\n- [\w-]+)*)', readme_content)
-            if tags_match:
-                tags_list = tags_match.group(0).splitlines()
-                # Look for specific entries in the tags list
-                for tag in tags_list:
-                    tag_value = tag.strip().replace('- ', '').strip()  # Clean tag value
-                    if tag_value in ("text-generation", "text2text-generation", "summarization", "translation"):
-                         return tag_value
-                            
-
-    # Then, check in the config.json
-    config_path = os.path.join(model_path, 'config.json')
-    if os.path.exists(config_path):
-        with open(config_path) as f:
-            config_file = json.load(f)
-            model_type = config_file.get("model_type", "").lower().strip()
-
-            # If not found at the top level, check within text_config if it exists
-            if not model_type and "text_config" in config_file:
-                model_type = config_file["text_config"].get("model_type", "").lower().strip()
-
-            # Infer from model_type
-            if model_type in ["m2m_100", "marian", "mbart", "mistral","qwen2", "t5"]:
-                return "translation"     
-            elif model_type in ["phi3", "mistral"]:
-                return "text-generation"        
-
-    # Final check: Look for llama compatible files with the *.gguf extension
+                # Extract pipeline_tag
+                pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content, re.IGNORECASE)
+                if pipeline_tag_match:
+                    pipeline_tag = pipeline_tag_match.group(1).strip().lower()
+                    if pipeline_tag in SUPPORTED_PIPELINES:
+                        logger.info(f"Found pipeline_tag '{pipeline_tag}' in README.md. Model type: '{pipeline_tag}'")
+                        return pipeline_tag
+                
+                # Extract tags
+                tags_match = re.search(r'tags:\s*\n((?:\s*-\s*\w+)+)', readme_content, re.IGNORECASE)
+                if tags_match:
+                    tags_block = tags_match.group(1)
+                    tags = re.findall(r'-\s*(\w+)', tags_block)
+                    for tag in tags:
+                        tag_lower = tag.lower()
+                        if tag_lower in SUPPORTED_PIPELINES:
+                            logger.info(f"Found tag '{tag_lower}' in README.md. Model type: '{tag_lower}'")
+                            return tag_lower
+        except Exception as e:
+            logger.error(f"Error reading README.md in {model_path}: {e}")
+    
+    # Check for .gguf files
     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
     if gguf_files:
-        # Note: these models will require llama_cpp integration; however still of type text-generation
-        return "text-generation" 
+        logger.info(f"Detected .gguf files in {model_path}. Model type: 'text-generation'")
+        return "text-generation"
     
-    return "unknown" 
+    # Parse config.json
+    config_path = os.path.join(model_path, 'config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_file = json.load(f)
+                model_type = config_file.get("model_type", "").lower().strip()
+                
+                # Check within 'text_config' if necessary
+                if not model_type and "text_config" in config_file:
+                    model_type = config_file["text_config"].get("model_type", "").lower().strip()
+                
+                inferred_type = MODEL_TYPE_MAPPING.get(model_type)
+                if inferred_type:
+                    logger.info(f"Derived model_type '{model_type}' from config.json. Model type: '{inferred_type}'")
+                    return inferred_type
+        except Exception as e:
+            logger.error(f"Error reading config.json in {model_path}: {e}")
+    
+    logger.warning(f"Could not determine model type for {model_dir}. Defaulting to 'unknown'.")
+    return "unknown"
+
 
 def get_directory_size(directory: str) -> int:
     """Calculate the total size of the directory."""

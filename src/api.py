@@ -102,7 +102,7 @@ async def list_models() -> List[ModelInfo]:
            
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Normalize model name
-            model_type = infer_model_type(model_dir)
+            model_type = infer_model_type(model_dir, config.DOWNLOAD_DIRECTORY)
             model_size = get_directory_size(model_path)  # Calculate total size        
             formatted_size = format_size(model_size)
             is_mounted = any(
@@ -656,9 +656,10 @@ async def get_model_info(
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
 
     try:
-        if return_type == "config":            
-            model_dir = model_name.replace('/', '--')
-            model_path = os.path.join(config.DOWNLOAD_DIRECTORY, f"models--{model_dir}")
+        if return_type == "config": 
+            model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
+            if (not os.path.exists(model_path)):
+                model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))     
 
             # First, look for 'config.json' in the model directory
             config_path = os.path.join(model_path, 'config.json')
