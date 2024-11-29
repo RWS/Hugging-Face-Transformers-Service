@@ -4,7 +4,9 @@ from typing import Union, List, Dict, Any, Optional
 
 class TranslationRequest(BaseModel):
     model_name: str = Field(description="The name of the translation model to use.")
-    text: str = Field(default="The cat is on the table.", description="The source content that should be translated.")
+    text: str = Field(
+        default=None,
+        description="The source content that should be translated.")
     
     class Config:
         protected_namespaces = ()
@@ -16,7 +18,9 @@ class TranslationRequest(BaseModel):
         }
 
 class TextGenerationRequest(BaseModel):
-    model_name: str = Field(description="The name of the text generation model to use.")
+    model_name: str = Field(
+        default=None,
+        description="The name of the text generation model to use.")
     prompt: List[Dict[str, str]] = Field(
         default=[
             {"role": "system", "content": "you are a helpful assistant"},
@@ -45,7 +49,7 @@ class TextGenerationRequest(BaseModel):
 
 class MountModelRequest(BaseModel):
     model_name: str = Field(
-        default="facebook/nllb-200-distilled-600M",
+        default=None,
         description="The Hugging Face model name."
     )
     model_type: str = Field(
@@ -87,27 +91,44 @@ class GeneratedResponse(BaseModel):
         ),
         example="Il gatto è sul tavolo.",
     )
-    
-    class Config:
-        # Disable protected namespaces if not required, otherwise remove or adjust as needed
+    class Config:    
         protected_namespaces = ()      
+
+class ListModelFilesRequest(BaseModel):   
+    model_name: str = Field(
+        default=None,
+        description="The Hugging Face model name")
+    api_key: Optional[str] = None
+    class Config:    
+        protected_namespaces = ()          
+
+class FileInfo(BaseModel):
+    file_name: str
+    file_size: Optional[str] = None  # Human-readable file size, e.g., "1.23 MB"
+    class Config:    
+        protected_namespaces = ()   
+
+class ListModelFilesResponse(BaseModel):
+    files: List[FileInfo]
+    class Config:    
+        protected_namespaces = ()     
 
 class DownloadModelRequest(BaseModel):
     client_id: str = Field(
-        ...,
+        default=None,
         description="Unique identifier for the client"
     )
     model_name: str = Field(
-        default="facebook/nllb-200-distilled-600M",
+        default=None,
         description="The Hugging Face model name"
     )
     api_key: Optional[str] = Field(
         default=None,
         description="The Hugging Face API key (optional). If provided, it will override the default token."
     )
-    file_filter: Optional[str] = Field(
+    files_to_download: Optional[List[str]] = Field(
         default=None,
-        description="Optional regex pattern to filter which files to download."
+        description="List of files from the model to download"
     )
     class Config:
         protected_namespaces = ()
@@ -118,47 +139,16 @@ class DownloadModelRequest(BaseModel):
                     "value": {
                         "client_id": "unique_client_id_123",
                         "model_name": "facebook/nllb-200-distilled-600M",
-                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q2_K_M\\.gguf$"
-                    }
-                },
-                {
-                    "summary": "Download multiple specific files (Q1 and Q5)",
-                    "value": {
-                        "client_id": "unique_client_id_456",
-                        "model_name": "facebook/nllb-200-distilled-600M",
-                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q[15]_K_M\\.gguf$"
-                    }
-                },
-                {
-                    "summary": "Download all gguf files with even Q numbers (Q2, Q4)",
-                    "value": {
-                        "client_id": "unique_client_id_789",
-                        "model_name": "facebook/nllb-200-distilled-600M",
-                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q[24]_K_M\\.gguf$"
-                    }
-                },
-                {
-                    "summary": "Download all gguf files regardless of Q number",
-                    "value": {
-                        "client_id": "unique_client_id_321",
-                        "model_name": "facebook/nllb-200-distilled-600M",
-                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q\\d+_K_M\\.gguf$"
-                    }
-                },
-                {
-                    "summary": "Download all gguf files except Q9",
-                    "value": {
-                        "client_id": "unique_client_id_987",
-                        "model_name": "facebook/nllb-200-distilled-600M",
-                        "file_filter": "^Mistral-v0\\.3-7B-ORPO_Q(?!9)_K_M\\.gguf$"
+                        "files_to_download": ["pytorch_model.bin","tokenizer.json","config.json","README.md"]
                     }
                 }
             ]
         }
 
+   
 class ModelRequest(BaseModel):
     model_name: str = Field(
-        default="facebook/nllb-200-distilled-600M",
+        default=None,
         description="The Hugging Face model name"
     )
 

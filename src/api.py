@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
-from huggingface_hub import hf_hub_download, model_info
-from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, LocalModel, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
+from huggingface_hub import hf_hub_download
+from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, FileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
 from state import model_state
 from connection_manager import ConnectionManager
-from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, filter_unwanted_files, extract_assistant_response
+from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, extract_assistant_response, fetch_model_info
 from config import config
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from llama_cpp import Llama
@@ -47,6 +47,85 @@ async def shutdown_event():
     print("Shutting down the server.")
 
 
+@router.post(
+    "/list_model_files/",
+    summary="List Model Files with Sizes",
+    description=(
+        "Retrieves the list of available files in the specified Hugging Face model repository, "
+        "including each file's size when available."
+    ),
+    response_model=ListModelFilesResponse,
+    responses={
+        200: {
+            "description": "Successful retrieval of model files with sizes.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "files": [
+                            {"file_name": "config.json", "file_size": "15.60 KB"},
+                            {"file_name": "pytorch_model.bin", "file_size": "350.45 MB"},
+                            {"file_name": "tokenizer.json", "file_size": "8.20 KB"},
+                            {"file_name": "README.md", "file_size": "Unknown"} 
+                        ]
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Model not found."
+        },
+        400: {
+            "description": "Error due to invalid request or issues fetching model information."
+        },
+    },
+)
+async def list_model_files_endpoint(
+    request: ListModelFilesRequest
+) -> ListModelFilesResponse:    
+    model_name = request.model_name
+    api_key = request.api_key
+    logger.info(
+        f"Received list files request for model: {model_name}"
+    )
+    try:
+        info = await asyncio.to_thread(fetch_model_info, model_name, api_key)
+        
+        logger.debug(f"Type of 'info': {type(info)}")
+        logger.debug(f"Attributes of 'info': {dir(info)}")
+        
+        if not hasattr(info, 'siblings'):
+            raise AttributeError("ModelInfo object has no attribute 'siblings'")
+        
+        files_info = []
+        for file in info.siblings:
+            if hasattr(file, 'size') and file.size is not None:
+                try:
+                    formatted_size = format_size(file.size)
+                except (TypeError, ValueError):
+                    formatted_size = "Unknown"  
+            else:
+                formatted_size = "Unknown" 
+            files_info.append(
+                FileInfo(
+                    file_name=file.rfilename,
+                    file_size=formatted_size
+                )
+            )
+        
+        logger.info(
+            f"Retrieved {len(files_info)} files from model {model_name}"
+        )
+        return {"files": files_info}
+    
+    except AttributeError as ae:
+        error_message = f"Error accessing model files: {str(ae)}"
+        logger.error(f"Error: {error_message}")
+        raise HTTPException(status_code=400, detail=error_message)
+    except Exception as e:
+        error_message = f"Error fetching files for model {model_name}: {str(e)}"
+        logger.error(f"Error: {error_message}")
+        raise HTTPException(status_code=400, detail=error_message)
+    
 @router.get(
     "/list_models/",
     response_model=List[ModelInfo],
@@ -79,7 +158,7 @@ async def shutdown_event():
                                 "Marco-o1-IQ2_M.gguf",
                                 "Marco-o1-Another.gguf"
                             ],
-                            "loaded_file_name": "Marco-o1-IQ2_M.gguf"  # Example of loaded gguf file
+                            "loaded_file_name": "Marco-o1-IQ2_M.gguf" 
                         }
                     ]
                 }
@@ -142,12 +221,15 @@ async def list_models() -> List[ModelInfo]:
     return models_info
 
 
+
 @router.post(
     "/download_model/",
     summary="Download a Model",
     description=(
         "Initiates the download of a specified model from the Hugging Face Hub. "
-        "If the model is already downloaded, it overwrites existing files."
+        "If the model is already downloaded, it overwrites existing files. "
+        "Users can specify which files to download. "
+        "If no files are specified, all files from the model will be downloaded."
     ),
     response_model=dict,
     responses={
@@ -156,8 +238,8 @@ async def list_models() -> List[ModelInfo]:
             "content": {
                 "application/json": {
                     "example": {
-                        "message": "Model download started.",
-                        "model_path": "C:/HuggingFace/model_cache/models--facebook/nllb-200-distilled-600M"
+                        "status": "Download started.",
+                        "message": "Model 'model_name' is being downloaded."
                     }
                 }
             }
@@ -174,11 +256,11 @@ async def download_model_endpoint(
     client_id = request.client_id
     model_name = request.model_name
     api_key = request.api_key 
-    file_filter = request.file_filter
-
+    files_to_download = request.files_to_download 
+    
     logger.info(
         f"Received download request from client_id: {client_id} "
-        f"for model: {model_name} with filter: {file_filter}"
+        f"for model: {model_name} with files: {files_to_download}"
     )
 
     # Check if the client has an active download
@@ -204,13 +286,13 @@ async def download_model_endpoint(
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     logger.info(f"Download directory ensured at {config.DOWNLOAD_DIRECTORY}")
 
-    # Start the download in a background task, passing the file_filter
+    # Start the download in a background task, passing the list of files
     background_tasks.add_task(
         download_model,
         client_id,
         model_name,
         api_key,
-        file_filter
+        files_to_download 
     )
 
     logger.info(f"Download initiated for client {client_id}.")
@@ -224,7 +306,7 @@ async def download_model(
     client_id: str,
     model_name: str,
     api_key: Optional[str],
-    file_filter: Optional[str] = None
+    files_to_download: Optional[List[str]] = None
 ):
     try:
         logger.info(
@@ -233,24 +315,16 @@ async def download_model(
         model_state = model_states[client_id]
         model_state["download_progress"]["status"] = "Download started."
 
-        # Fetch model information in a separate thread to avoid blocking
         info = await asyncio.get_event_loop().run_in_executor(
             executor,
-            lambda: model_info(model_name)
+            lambda: fetch_model_info(model_name, api_key)
         )
-        files = info.siblings
+        available_files = [file.rfilename for file in info.siblings]
 
-        # Apply regex filter if provided
-        if file_filter:
-            try:
-                regex = re.compile(file_filter)
-                filtered_files = [f for f in files if regex.search(f.rfilename)]
-                logger.info(
-                    f"Applied filter '{file_filter}', "
-                    f"{len(filtered_files)} out of {len(files)} files selected."
-                )
-            except re.error as e:
-                error_message = f"Invalid regex pattern: {str(e)}"
+        if files_to_download:
+            invalid_files = [f for f in files_to_download if f not in available_files]
+            if invalid_files:
+                error_message = f"The following files are not available in the model repository: {invalid_files}"
                 model_state["download_progress"]["error"] = error_message
                 logger.error(f"Client {client_id}: {error_message}")
 
@@ -262,10 +336,32 @@ async def download_model(
                     })
                 )
                 return
+            filtered_files = files_to_download
+            logger.info(
+                f"Client {client_id}: {len(filtered_files)} files selected for download."
+            )
         else:
-            filtered_files = filter_unwanted_files(files)
+            # If files_to_download is None or empty, download all files
+            filtered_files = available_files
+            logger.info(
+                f"Client {client_id}: No specific files requested. Downloading all {len(filtered_files)} files."
+            )
 
         total_files = len(filtered_files)
+        if total_files == 0:
+            error_message = "No files available to download."
+            model_state["download_progress"]["error"] = error_message
+            logger.error(f"Client {client_id}: {error_message}")
+
+            await manager.send_message(
+                client_id,
+                json.dumps({
+                    "type": "error",
+                    "data": error_message
+                })
+            )
+            return
+
         model_state["download_progress"].update({
             "status": "Downloading",
             "message": f"Downloaded 0 of {total_files}",
@@ -273,33 +369,47 @@ async def download_model(
         })
         logger.info(f"Model {model_name} has {total_files} files to download.")
 
-        for index, file in enumerate(filtered_files):
+        for index, filename in enumerate(filtered_files):
             try:
+                start_message = {
+                    "file_name": filename,
+                    "index": index + 1,
+                    "total_files": total_files,
+                    "status": "started"
+                }
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "file_started",
+                        "data": start_message
+                    })
+                )
+                                
                 logger.info(
                     f"Client {client_id}: Downloading file "
-                    f"{file.rfilename} ({index + 1}/{total_files})"
+                    f"{filename} ({index + 1}/{total_files})"
                 )
-                
+
                 token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
 
-                # Download the file in a separate thread with named arguments using partial
+                # Download the file asynchronously
                 file_path = await asyncio.get_event_loop().run_in_executor(
                     executor,
                     partial(
                         hf_hub_download,
                         repo_id=model_name,
-                        filename=file.rfilename,
+                        filename=filename,
                         cache_dir=config.DOWNLOAD_DIRECTORY,
                         force_download=True, 
                         token=token_to_use
                     )
                 )
                 logger.info(
-                    f"Client {client_id}: Successfully downloaded {file.rfilename}"
+                    f"Client {client_id}: Successfully downloaded {filename}"
                 )
 
                 progress_update = {
-                    "file_name": file.rfilename,
+                    "file_name": filename,
                     "index": index + 1,
                     "total_files": total_files
                 }
@@ -307,7 +417,7 @@ async def download_model(
                 model_state["download_progress"]["message"] = (
                     f"Downloaded {index + 1} of {total_files}"
                 )
-               
+                
                 await manager.send_message(
                     client_id,
                     json.dumps({
@@ -317,10 +427,10 @@ async def download_model(
                 )
 
             except Exception as e:
-                error_message = f"Error downloading {file.rfilename}: {str(e)}"
+                error_message = f"Error downloading {filename}: {str(e)}"
                 model_state["download_progress"]["error"] = error_message
                 logger.error(f"Client {client_id}: {error_message}")
-                
+
                 await manager.send_message(
                     client_id,
                     json.dumps({
@@ -344,7 +454,6 @@ async def download_model(
                 })
             )
 
-            # Execute post-download tasks in a separate thread
             await asyncio.get_event_loop().run_in_executor(
                 executor,
                 lambda: move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
@@ -352,7 +461,7 @@ async def download_model(
     finally:
         model_state["is_downloading"] = False
         logger.info(f"Client {client_id}: Download state reset.")
-    
+
 
 @router.websocket("/ws/progress/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -437,7 +546,6 @@ async def mount_model(request: MountModelRequest) -> dict:
     trans_pipeline = None    
 
     try:
-        # Load model and tokenizer based on the model type
         if requested_model_type == 'translation':
             model = get_model_type(requested_model_type).from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -536,7 +644,6 @@ async def unmount_model(request: ModelRequest) -> dict:
     
     model_name = request.model_name
     
-    # Check if the model is currently mounted
     model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
     
     if model_to_unmount is None:

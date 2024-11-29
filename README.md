@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a FastAPI application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The service allows users to **download and mount** models locally, making it possible to run model inference without requiring an internet connection once the models are downloaded.
+This **Local LLM server** application is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The application is built leveraging FastAPI, Python and is able to run a wide selection of Hugging Face LLMs models. It can run either as a local Windows service or can be included in a Docker container enabling users to download and mount models locally.
 
 ### Key Features
 
@@ -17,8 +17,6 @@ This is a FastAPI application designed to provide an intuitive and efficient int
 - **Streaming Progress Updates**: For long-running operations such as downloading models, the application provides real-time progress updates, allowing users to monitor the status of their downloads.
 
 <!-- - **Metrics and Monitoring**: Integrates with Prometheus and Grafana for monitoring application performance and resource utilization, ensuring that the application runs smoothly and efficiently. -->
-
-By combining the power of Hugging Face's state-of-the-art models with the ease of FastAPI, this application empowers users to enhance their applications with robust NLP capabilities directly from their local environment.
 
 ### Supported Model Types
 
@@ -121,14 +119,14 @@ PORT=8001
 
 - `HUGGINGFACE_MODELS_DIR`: Specify the directory where downloaded models will be stored. Adjust the path as needed based on your system's file structure.
 - `HUGGINGFACE_TOKEN`: Replace `Your_Hugging_Face_API_Token` with your actual Hugging Face API token. You can obtain this token from your Hugging Face account settings.
-- `HOST`: Set the host IP address for the FastAPI application. The default is `0.0.0.0` to allow access from any IP.
-- `PORT`: Set the port number on which the FastAPI application will listen. The default is `8001`, but you can change this to suit your needs.
+- `HOST`: Set the host IP address for the Local LLM server. The default is `0.0.0.0` to allow access from any IP.
+- `PORT`: Set the port number on which the Local LLM server will listen. The default is `8001`, but you can change this to suit your needs.
 
-Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the FastAPI application on the specified port.
+Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the Local LLM server on the specified port.
 
-### Step 8: Start the FastAPI Server
+### Step 8: Start the Local LLM server
 
-Run the FastAPI application:
+Run the Local LLM server:
 
 ```bash
 python src/main.py
@@ -148,7 +146,7 @@ Documentation:
 
 ### Step 1: Compile the Application with PyInstaller
 
-To create an executable for your FastAPI application, use PyInstaller as follows:
+To create an executable for your Local LLM server, use PyInstaller as follows:
 
 ```bash
 pyinstaller HuggingFace-TS.spec
@@ -160,9 +158,9 @@ After compiling your application, ensure that the `.env` file is present in the 
 
 - **Editing the `.env` File**: The `.env` file can be opened and modified using any text editor (e.g., Notepad, Visual Studio Code).
 
-### Step 3: Start the FastAPI Server
+### Step 3: Start the Local LLM server
 
-Run the FastAPI application by executing `HuggingFace-TS.exe` from the `dist` directory:
+Run the Local LLM server by executing `HuggingFace-TS.exe` from the `dist` directory:
 
 ```bash
 cd dist

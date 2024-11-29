@@ -1,5 +1,7 @@
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from config import config
+from huggingface_hub import HfApi
+from typing import Optional
 import os
 import shutil
 import glob
@@ -41,7 +43,21 @@ def get_model_type(task: str):
         return SUPPORTED_MODEL_TYPES['text-generation']
     else:
         raise ValueError(f"Unsupported task: {task}")
-    
+
+
+def fetch_model_info(model_name: str, api_key: Optional[str] = None):
+    """
+    Fetches the model information from Hugging Face Hub.
+
+    Args:
+        model_name (str): The identifier of the model.
+        api_key (Optional[str]): The Hugging Face API key for authentication.
+
+    Returns:
+        ModelInfo: An object containing information about the model.
+    """
+    api = HfApi()
+    return api.model_info(repo_id=model_name, token=api_key or config.HUGGINGFACE_TOKEN)
 
 def extract_assistant_response(response):
     """
@@ -251,6 +267,5 @@ def format_size(size_bytes: int) -> str:
         size_bytes /= 1024
         index += 1
     return f"{size_bytes:.2f} {size_units[index]}"
-
 
 
