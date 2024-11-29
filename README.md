@@ -175,7 +175,7 @@ HuggingFace-TS.exe
 - `GET /model_info/`: Retrieve model information, including configuration details and types supported.
 - `POST /list_model_files/`: Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available.
 - `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
-- `GET /download_progress/`: Polling method to fetch the current download progress of the model, if a download is in progress.
+- `WS /ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
 - `DEL /delete_model/`: Delete the local files of a previously mounted model based on the model name
 - `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
 - `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
