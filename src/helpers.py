@@ -7,6 +7,7 @@ import shutil
 import glob
 import re
 import json
+import aiohttp
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -45,19 +46,9 @@ def get_model_type(task: str):
         raise ValueError(f"Unsupported task: {task}")
 
 
-def fetch_model_info(model_name: str, api_key: Optional[str] = None):
-    """
-    Fetches the model information from Hugging Face Hub.
 
-    Args:
-        model_name (str): The identifier of the model.
-        api_key (Optional[str]): The Hugging Face API key for authentication.
 
-    Returns:
-        ModelInfo: An object containing information about the model.
-    """
-    api = HfApi()
-    return api.model_info(repo_id=model_name, token=api_key or config.HUGGINGFACE_TOKEN)
+
 
 def extract_assistant_response(response):
     """
@@ -98,7 +89,7 @@ def extract_assistant_response(response):
 
 def move_snapshot_files(model_name: str, download_directory: str):
     """Move snapshot files from the downloaded model's snapshots directory to its root."""
-    model_path = os.path.join(download_directory, "models--" + model_name.replace('/', '--'))
+    model_path = os.path.join(download_directory, model_name.replace('/', '--'))
     snapshots_path = os.path.join(model_path, "snapshots")
     
     if os.path.exists(snapshots_path):
@@ -267,5 +258,57 @@ def format_size(size_bytes: int) -> str:
         size_bytes /= 1024
         index += 1
     return f"{size_bytes:.2f} {size_units[index]}"
+
+def fetch_model_info(model_name: str, api_key: str):
+    """Fetch model information from Hugging Face Hub."""
+    api = HfApi()
+    try:
+        model_info = api.model_info(repo_id=model_name, token=api_key or config.HUGGINGFACE_TOKEN)
+        return model_info
+    except Exception as e:
+        logger.error(f"Failed to fetch model info: {e}")
+        raise
+    
+async def get_file_size_via_head(url: str) -> Optional[int]:
+    """Retrieve the file size by performing a HEAD request with redirects allowed."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, allow_redirects=True) as response:
+                if response.status == 200:
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        logger.debug(f"Content-Length for {url}: {content_length}")
+                        return int(content_length)
+                    else:
+                        logger.warning(f"No Content-Length header for {url}")
+                else:
+                    logger.warning(f"Received status {response.status} for HEAD request to {url}")
+    except Exception as e:
+        logger.error(f"Failed to fetch size for URL {url}: {e}")
+    return None
+
+async def get_file_size_via_get(url: str) -> Optional[int]:
+    """Retrieve the file size by performing a GET request with Range header."""
+    try:
+        headers = {'Range': 'bytes=0-0'}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, allow_redirects=True) as response:
+                if response.status in (200, 206):
+                    content_range = response.headers.get('Content-Range')
+                    if content_range:                       
+                        size = content_range.split('/')[-1]
+                        if size.isdigit():
+                            logger.debug(f"Content-Range for {url}: {content_range}")
+                            return int(size)
+                    else:
+                        content_length = response.headers.get('Content-Length')
+                        if content_length:
+                            logger.debug(f"Content-Length for {url}: {content_length}")
+                            return int(content_length)
+                else:
+                    logger.warning(f"Received status {response.status} for GET request to {url}")
+    except Exception as e:
+        logger.error(f"Failed to fetch size for URL {url} via GET: {e}")
+    return None
 
 

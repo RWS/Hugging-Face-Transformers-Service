@@ -94,42 +94,29 @@ class GeneratedResponse(BaseModel):
     class Config:    
         protected_namespaces = ()      
 
-class ListModelFilesRequest(BaseModel):   
-    model_name: str = Field(
-        default=None,
-        description="The Hugging Face model name")
-    api_key: Optional[str] = None
+class ListModelFilesRequest(BaseModel):
+    model_name: str = Field(..., description="The Hugging Face model repository name, e.g., 'username/model-name'")
+    api_key: Optional[str] = Field(None, description="Your Hugging Face API token if accessing private repositories.")
     class Config:    
         protected_namespaces = ()          
 
-class FileInfo(BaseModel):
+class ModelFileInfo(BaseModel):
     file_name: str
-    file_size: Optional[str] = None  # Human-readable file size, e.g., "1.23 MB"
+    file_size: Optional[str] = None  # Human-readable file size
+    download_url: Optional[str] = None  # Direct download URL
     class Config:    
         protected_namespaces = ()   
 
 class ListModelFilesResponse(BaseModel):
-    files: List[FileInfo]
+    files: List[ModelFileInfo]
     class Config:    
         protected_namespaces = ()     
 
 class DownloadModelRequest(BaseModel):
-    client_id: str = Field(
-        default=None,
-        description="Unique identifier for the client"
-    )
-    model_name: str = Field(
-        default=None,
-        description="The Hugging Face model name"
-    )
-    api_key: Optional[str] = Field(
-        default=None,
-        description="The Hugging Face API key (optional). If provided, it will override the default token."
-    )
-    files_to_download: Optional[List[str]] = Field(
-        default=None,
-        description="List of files from the model to download"
-    )
+    client_id: str = Field(..., description="Unique identifier for the client")
+    model_name: str = Field(..., description="The Hugging Face model repository name")
+    api_key: Optional[str] = Field(None, description="Your Hugging Face API token if accessing private repositories.")
+    files_to_download: Optional[List[str]] = Field(None, description="List of specific files to download. If not provided, all files will be downloaded.")
     class Config:
         protected_namespaces = ()
         json_schema_extra = {

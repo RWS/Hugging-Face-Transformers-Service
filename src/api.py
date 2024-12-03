@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
-from fastapi.responses import JSONResponse, StreamingResponse
-from huggingface_hub import hf_hub_download
-from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, FileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
+#from fastapi.responses import JSONResponse, StreamingResponse
+from huggingface_hub import hf_hub_url
+from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
 from state import model_state
-from connection_manager import ConnectionManager
-from helpers import infer_model_type, get_directory_size, format_size, get_model_type, move_snapshot_files, extract_assistant_response, fetch_model_info
+from connection_manager import WebSocketManager
+from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
 from llama_cpp import Llama
@@ -18,14 +18,13 @@ import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
-from functools import partial
-import re
+import aiohttp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-manager = ConnectionManager()
+manager = WebSocketManager()
 model_states: Dict[str, Dict] = {}
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -62,10 +61,8 @@ async def shutdown_event():
                 "application/json": {
                     "example": {
                         "files": [
-                            {"file_name": "config.json", "file_size": "15.60 KB"},
-                            {"file_name": "pytorch_model.bin", "file_size": "350.45 MB"},
-                            {"file_name": "tokenizer.json", "file_size": "8.20 KB"},
-                            {"file_name": "README.md", "file_size": "Unknown"} 
+                            {"file_name": "config.json", "file_size": "15.60 KB", "download_url": "https://..."},
+                            {"file_name": "pytorch_model.bin", "file_size": "350.45 MB", "download_url": "https://..."},
                         ]
                     }
                 }
@@ -81,13 +78,12 @@ async def shutdown_event():
 )
 async def list_model_files_endpoint(
     request: ListModelFilesRequest
-) -> ListModelFilesResponse:    
+) -> ListModelFilesResponse:     
     model_name = request.model_name
-    api_key = request.api_key
-    logger.info(
-        f"Received list files request for model: {model_name}"
-    )
+    api_key = request.api_key if request.api_key else config.HUGGINGFACE_TOKEN 
+    logger.info(f"Received list files request for model: {model_name}")
     try:
+        # Fetch model information using Hugging Face Hub API
         info = await asyncio.to_thread(fetch_model_info, model_name, api_key)
         
         logger.debug(f"Type of 'info': {type(info)}")
@@ -97,24 +93,45 @@ async def list_model_files_endpoint(
             raise AttributeError("ModelInfo object has no attribute 'siblings'")
         
         files_info = []
+        
+        # Extract the default branch for accurate download URLs
+        # default_branch = info.sha  # Alternatively, use info.default_branch if available
+        # if hasattr(info, 'default_branch') and info.default_branch:
+        #     default_branch = info.default_branch
+        
         for file in info.siblings:
-            if hasattr(file, 'size') and file.size is not None:
-                try:
-                    formatted_size = format_size(file.size)
-                except (TypeError, ValueError):
-                    formatted_size = "Unknown"  
-            else:
-                formatted_size = "Unknown" 
+            filename = file.rfilename
+            if not filename:
+                continue 
+            
+            download_url = hf_hub_url(
+                repo_id=model_name,
+                filename=filename
+                #revision=default_branch
+            )
+            
+            if getattr(file, 'size', None) is not None:
+                formatted_size = format_size(file.size)
+            else:            
+                size_bytes = await get_file_size_via_head(download_url)
+                if size_bytes is not None:
+                    formatted_size = format_size(size_bytes)
+                else:
+                    size_bytes = await get_file_size_via_get(download_url)
+                    if size_bytes is not None:
+                        formatted_size = format_size(size_bytes)
+                    else:
+                        formatted_size = "Unknown"
+            
             files_info.append(
-                FileInfo(
-                    file_name=file.rfilename,
-                    file_size=formatted_size
+                ModelFileInfo(
+                    file_name=filename,
+                    file_size=formatted_size,
+                    download_url=download_url
                 )
             )
         
-        logger.info(
-            f"Retrieved {len(files_info)} files from model {model_name}"
-        )
+        logger.info(f"Retrieved {len(files_info)} files from model '{model_name}'")
         return {"files": files_info}
     
     except AttributeError as ae:
@@ -122,7 +139,7 @@ async def list_model_files_endpoint(
         logger.error(f"Error: {error_message}")
         raise HTTPException(status_code=400, detail=error_message)
     except Exception as e:
-        error_message = f"Error fetching files for model {model_name}: {str(e)}"
+        error_message = f"Error fetching files for model '{model_name}': {str(e)}"
         logger.error(f"Error: {error_message}")
         raise HTTPException(status_code=400, detail=error_message)
     
@@ -255,14 +272,13 @@ async def download_model_endpoint(
 ) -> dict:
     client_id = request.client_id
     model_name = request.model_name
-    api_key = request.api_key 
-    files_to_download = request.files_to_download 
-    
+    api_key = request.api_key if request.api_key else config.HUGGINGFACE_TOKEN 
+    files_to_download = request.files_to_download
+   
     logger.info(
         f"Received download request from client_id: {client_id} "
         f"for model: {model_name} with files: {files_to_download}"
     )
-
     # Check if the client has an active download
     if model_states.get(client_id, {}).get("is_downloading"):
         logger.warning(f"Client {client_id} already has an active download.")
@@ -270,7 +286,6 @@ async def download_model_endpoint(
             status_code=400,
             detail="A download is currently in progress for this client."
         )
-
     # Initialize the model state for this client
     model_states[client_id] = {
         "is_downloading": True,
@@ -281,22 +296,18 @@ async def download_model_endpoint(
             "files": []
         }
     }
-
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     logger.info(f"Download directory ensured at {config.DOWNLOAD_DIRECTORY}")
-
     # Start the download in a background task, passing the list of files
     background_tasks.add_task(
         download_model,
         client_id,
         model_name,
         api_key,
-        files_to_download 
+        files_to_download
     )
-
     logger.info(f"Download initiated for client {client_id}.")
-
     return {
         "status": "Download started.",
         "message": f"Model '{model_name}' is being downloaded."
@@ -309,25 +320,20 @@ async def download_model(
     files_to_download: Optional[List[str]] = None
 ):
     try:
-        logger.info(
-            f"Starting download process for client {client_id}, model {model_name}"
-        )
+        logger.info(f"Starting download process for client {client_id}, model {model_name}")
         model_state = model_states[client_id]
         model_state["download_progress"]["status"] = "Download started."
-
-        info = await asyncio.get_event_loop().run_in_executor(
-            executor,
-            lambda: fetch_model_info(model_name, api_key)
-        )
+                    
+        info = await asyncio.to_thread(fetch_model_info, model_name, api_key=api_key)
+        
         available_files = [file.rfilename for file in info.siblings]
-
+        
         if files_to_download:
             invalid_files = [f for f in files_to_download if f not in available_files]
             if invalid_files:
                 error_message = f"The following files are not available in the model repository: {invalid_files}"
                 model_state["download_progress"]["error"] = error_message
                 logger.error(f"Client {client_id}: {error_message}")
-
                 await manager.send_message(
                     client_id,
                     json.dumps({
@@ -337,22 +343,19 @@ async def download_model(
                 )
                 return
             filtered_files = files_to_download
-            logger.info(
-                f"Client {client_id}: {len(filtered_files)} files selected for download."
-            )
+            logger.info(f"Client {client_id}: {len(filtered_files)} files selected for download.")
         else:
             # If files_to_download is None or empty, download all files
             filtered_files = available_files
             logger.info(
                 f"Client {client_id}: No specific files requested. Downloading all {len(filtered_files)} files."
             )
-
+        
         total_files = len(filtered_files)
         if total_files == 0:
             error_message = "No files available to download."
             model_state["download_progress"]["error"] = error_message
             logger.error(f"Client {client_id}: {error_message}")
-
             await manager.send_message(
                 client_id,
                 json.dumps({
@@ -361,14 +364,31 @@ async def download_model(
                 })
             )
             return
-
+        
         model_state["download_progress"].update({
             "status": "Downloading",
-            "message": f"Downloaded 0 of {total_files}",
-            "files": []
+            "message": "Downloading started.",
+            "files": [],
+            "overall_progress": "0.00%"
         })
         logger.info(f"Model {model_name} has {total_files} files to download.")
-
+        
+        # Determine the default branch
+        #default_branch = info.default_branch if hasattr(info, 'default_branch') and info.default_branch else info.sha
+        
+        # Calculate total size for overall progress
+        total_size = 0
+        file_sizes = {}
+        for file in info.siblings:
+            if file.rfilename in filtered_files:
+                if getattr(file, 'size', None) is not None:
+                    file_sizes[file.rfilename] = file.size
+                    total_size += file.size
+                else:
+                    file_sizes[file.rfilename] = None 
+        
+        downloaded_total = 0
+        
         for index, filename in enumerate(filtered_files):
             try:
                 start_message = {
@@ -386,51 +406,68 @@ async def download_model(
                 )
                                 
                 logger.info(
-                    f"Client {client_id}: Downloading file "
-                    f"{filename} ({index + 1}/{total_files})"
+                    f"Client {client_id}: Downloading file {filename} ({index + 1}/{total_files})"
                 )
-
-                token_to_use = api_key if api_key else config.HUGGINGFACE_TOKEN
-
-                # Download the file asynchronously
-                file_path = await asyncio.get_event_loop().run_in_executor(
-                    executor,
-                    partial(
-                        hf_hub_download,
-                        repo_id=model_name,
-                        filename=filename,
-                        cache_dir=config.DOWNLOAD_DIRECTORY,
-                        force_download=True, 
-                        token=token_to_use
-                    )
+                                               
+                download_url = hf_hub_url(
+                    repo_id=model_name,
+                    filename=filename
+                    #revision=default_branch
                 )
+                
+                destination_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'), filename)                
+                # Start downloading the file with progress tracking
+                await download_file(
+                    download_url=download_url,
+                    destination_path=destination_path,
+                    client_id=client_id,
+                    filename=filename,
+                    token=api_key if api_key else config.HUGGINGFACE_TOKEN
+                )
+                
                 logger.info(
                     f"Client {client_id}: Successfully downloaded {filename}"
                 )
-
+                
                 progress_update = {
                     "file_name": filename,
                     "index": index + 1,
-                    "total_files": total_files
+                    "total_files": total_files,
+                    "status": "completed"
                 }
                 model_state["download_progress"]["files"].append(progress_update)
                 model_state["download_progress"]["message"] = (
-                    f"Downloaded {index + 1} of {total_files}"
+                    f"Downloaded {index + 1} of {total_files} files."
                 )
                 
                 await manager.send_message(
                     client_id,
                     json.dumps({
-                        "type": "file_downloaded",
+                        "type": "file_completed",
                         "data": progress_update
                     })
                 )
-
+                
+                # Update overall progress
+                file_size = file_sizes.get(filename)
+                if file_size:
+                    downloaded_total += file_size
+                    overall_progress = (downloaded_total / total_size) * 100 if total_size else 0
+                    model_state["download_progress"]["overall_progress"] = f"{overall_progress:.2f}%"
+                    
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "type": "overall_progress",
+                            "data": {
+                                "progress": f"{overall_progress:.2f}%"
+                            }
+                        })
+                    )
             except Exception as e:
                 error_message = f"Error downloading {filename}: {str(e)}"
                 model_state["download_progress"]["error"] = error_message
                 logger.error(f"Client {client_id}: {error_message}")
-
                 await manager.send_message(
                     client_id,
                     json.dumps({
@@ -439,11 +476,12 @@ async def download_model(
                     })
                 )
                 break  # Stop downloading on error
-
+        
         if not model_state["download_progress"]["error"]:
             model_state["download_progress"].update({
                 "status": "Completed",
-                "message": f"Downloaded {total_files} of {total_files}"
+                "message": f"Downloaded {total_files} of {total_files} files.",
+                "overall_progress": "100.00%"
             })
             logger.info(f"Client {client_id}: Download completed successfully.")
             await manager.send_message(
@@ -453,15 +491,69 @@ async def download_model(
                     "data": f"Model '{model_name}' download completed."
                 })
             )
-
-            await asyncio.get_event_loop().run_in_executor(
-                executor,
-                lambda: move_snapshot_files(model_name, config.DOWNLOAD_DIRECTORY)
-            )
+            #await asyncio.to_thread(move_snapshot_files, model_name, config.DOWNLOAD_DIRECTORY)
     finally:
         model_state["is_downloading"] = False
         logger.info(f"Client {client_id}: Download state reset.")
 
+async def download_file(
+    download_url: str,
+    destination_path: str,
+    client_id: str,
+    filename: str,
+    token: Optional[str] = None,
+    chunk_size: int = 1024 * 1024  # 1MB
+):
+    """
+    Download a file from the given URL to the destination path,
+    sending progress updates via WebSockets to the client.
+    """
+    headers = {}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(download_url) as response:
+                response.raise_for_status()
+                total_size = response.headers.get('Content-Length')
+                if total_size:
+                    total_size = int(total_size)
+                downloaded = 0
+
+                # Ensure the destination directory exists
+                os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+
+                with open(destination_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size:
+                                progress = (downloaded / total_size) * 100
+                                await manager.send_message(
+                                    client_id,
+                                    json.dumps({
+                                        "type": "file_progress",
+                                        "data": {
+                                            "file_name": filename,
+                                            "progress": f"{progress:.2f}%",
+                                            "downloaded": downloaded,
+                                            "total": total_size
+                                        }
+                                    })
+                                )
+    except Exception as e:
+        error_message = f"Failed to download {filename}: {str(e)}"
+        logger.error(error_message)
+        await manager.send_message(
+            client_id,
+            json.dumps({
+                "type": "error",
+                "data": error_message
+            })
+        )
+        raise
 
 @router.websocket("/ws/progress/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -534,9 +626,7 @@ async def mount_model(request: MountModelRequest) -> dict:
         return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
 
     # Construct the model path based on the model name
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, "models--" + model_name.replace('/', '--'))    
-    if not os.path.exists(model_path):
-        model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))    
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))    
     
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail="Model path does not exist.")
@@ -681,9 +771,8 @@ async def delete_model(request: ModelRequest) -> dict:
         # Remove the model from the global models list
         model_state.models.remove(model_to_delete)
 
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
-    if (not os.path.exists(model_path)):
-        model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--')) 
+    
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--')) 
 
     # Check if the model path exists
     if not os.path.exists(model_path):
@@ -816,9 +905,7 @@ async def get_model_info(
 
     try:
         if return_type == "config": 
-            model_path = os.path.join(config.DOWNLOAD_DIRECTORY , "models--" + model_name.replace('/', '--'))    
-            if (not os.path.exists(model_path)):
-                model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))     
+            model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))     
 
             # First, look for 'config.json' in the model directory
             config_path = os.path.join(model_path, 'config.json')
