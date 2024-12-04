@@ -3,7 +3,7 @@ from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconn
 from huggingface_hub import hf_hub_url
 from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
 from state import model_state
-from connection_manager import WebSocketManager
+from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
 from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-manager = WebSocketManager()
+manager = ConnectionManager()
 model_states: Dict[str, Dict] = {}
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -45,6 +45,13 @@ async def startup_event():
 async def shutdown_event():
     print("Shutting down the server.")
 
+
+@router.get("/download_directory", response_model=str)
+def get_download_path():
+    """
+    Retrieve the current download directory.
+    """
+    return config.DOWNLOAD_DIRECTORY
 
 @router.post(
     "/list_model_files/",
@@ -502,7 +509,7 @@ async def download_file(
     client_id: str,
     filename: str,
     token: Optional[str] = None,
-    chunk_size: int = 1024 * 1024  # 1MB
+    chunk_size: int = 5 * 1024 * 1024  # 5MB
 ):
     """
     Download a file from the given URL to the destination path,
@@ -511,7 +518,6 @@ async def download_file(
     headers = {}
     if token:
         headers['Authorization'] = f'Bearer {token}'
-
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(download_url) as response:
@@ -520,10 +526,8 @@ async def download_file(
                 if total_size:
                     total_size = int(total_size)
                 downloaded = 0
-
                 # Ensure the destination directory exists
                 os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-
                 with open(destination_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         if chunk:
@@ -531,28 +535,35 @@ async def download_file(
                             downloaded += len(chunk)
                             if total_size:
                                 progress = (downloaded / total_size) * 100
-                                await manager.send_message(
-                                    client_id,
-                                    json.dumps({
-                                        "type": "file_progress",
-                                        "data": {
-                                            "file_name": filename,
-                                            "progress": f"{progress:.2f}%",
-                                            "downloaded": downloaded,
-                                            "total": total_size
-                                        }
-                                    })
-                                )
+                                try:
+                                    await manager.send_message(
+                                        client_id,
+                                        json.dumps({
+                                            "type": "file_progress",
+                                            "data": {
+                                                "file_name": filename,
+                                                "progress": f"{progress:.2f}%",
+                                                "downloaded": downloaded,
+                                                "total": total_size
+                                            }
+                                        })
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to send progress update: {e}")
+                                    
     except Exception as e:
         error_message = f"Failed to download {filename}: {str(e)}"
         logger.error(error_message)
-        await manager.send_message(
-            client_id,
-            json.dumps({
-                "type": "error",
-                "data": error_message
-            })
-        )
+        try:
+            await manager.send_message(
+                client_id,
+                json.dumps({
+                    "type": "error",
+                    "data": error_message
+                })
+            )
+        except Exception as send_err:
+            logger.warning(f"Failed to send error message: {send_err}")
         raise
 
 @router.websocket("/ws/progress/{client_id}")
@@ -561,12 +572,26 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     logger.info(f"WebSocket connection established for client {client_id}")
     try:
         while True:
-            # Keep the connection alive.
-            await asyncio.sleep(10)
-    except WebSocketDisconnect:
+            try:
+                # Await and process incoming messages from the client
+                data = await websocket.receive_text()
+                if data == "heartbeat":
+                    logger.info(f"Heartbeat received from {client_id}")
+                    # Send acknowledgment
+                    await manager.send_message(client_id, json.dumps({"type": "heartbeat_ack"}))
+                else:
+                    logger.info(f"Received message from {client_id}: {data}")
+            except WebSocketDisconnect:
+                logger.info(f"WebSocketDisconnect: Client {client_id} disconnected.")
+                await manager.disconnect(client_id)
+                break
+            except Exception as e:
+                logger.error(f"Error in WebSocket communication with {client_id}: {e}")
+                await manager.disconnect(client_id)
+                break
+    except Exception as e:
+        logger.error(f"Unexpected error in WebSocket endpoint for {client_id}: {e}")
         await manager.disconnect(client_id)
-        logger.info(f"WebSocket connection closed for client {client_id}")
-
 
 
 @router.post(

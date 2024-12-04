@@ -248,16 +248,32 @@ def get_directory_size(directory: str) -> int:
                 total_size += os.path.getsize(fp)
     return total_size
 
+
 def format_size(size_bytes: int) -> str:
-    """Return a human-readable string representation of size in bytes."""
+    """
+    Return a human-readable string representation of size in bytes,
+    rounded to 0 decimal places.
+    
+    Parameters:
+        size_bytes (int): The size in bytes.
+        
+    Returns:
+        str: Formatted size string with appropriate units.
+    """
     if size_bytes == 0:
         return "0 Bytes"
+    
     size_units = ['Bytes', 'KB', 'MB', 'GB', 'TB']
     index = 0
-    while size_bytes >= 1024 and index < len(size_units) - 1:
-        size_bytes /= 1024
+    size = float(size_bytes) 
+    
+    while size >= 1024 and index < len(size_units) - 1:
+        size /= 1024
         index += 1
-    return f"{size_bytes:.2f} {size_units[index]}"
+    
+    formatted_size = f"{size:.0f} {size_units[index]}"
+    return formatted_size
+
 
 def fetch_model_info(model_name: str, api_key: str):
     """Fetch model information from Hugging Face Hub."""
@@ -268,6 +284,7 @@ def fetch_model_info(model_name: str, api_key: str):
     except Exception as e:
         logger.error(f"Failed to fetch model info: {e}")
         raise
+   
     
 async def get_file_size_via_head(url: str) -> Optional[int]:
     """Retrieve the file size by performing a HEAD request with redirects allowed."""

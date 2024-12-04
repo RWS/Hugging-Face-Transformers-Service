@@ -2,7 +2,7 @@ fastapi==0.112.1
 transformers==4.44.0
 torch==2.4.1
 uvicorn==0.30.6
-python-multipart==0.0.17
+python-multipart==0.0.18
 websockets==14.1
 huggingface_hub==0.26.3
 sentencepiece==0.2.0

@@ -14,4 +14,4 @@ if __name__ == "__main__":
     import uvicorn
     print(f"API Name: {app.title}")
     print(f"API Version: {app.version}")
-    uvicorn.run(app, host=config.HOST, port=int(config.PORT))
+    uvicorn.run(app, host=config.HOST, port=int(config.PORT), ws_ping_interval=60)
