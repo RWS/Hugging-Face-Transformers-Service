@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 #from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_url
-from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse
+from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
@@ -46,12 +46,29 @@ async def shutdown_event():
     print("Shutting down the server.")
 
 
-@router.get("/download_directory", response_model=str)
-def get_download_path():
+@router.post("/download_directory", response_model=DownloadDirectoryResponse)
+def get_download_path(request: DownloadDirectoryRequest):
     """
     Retrieve the current download directory.
+
+    If `model_name` is provided and not empty, include it in the path.
     """
-    return config.DOWNLOAD_DIRECTORY
+
+    download_dir = config.DOWNLOAD_DIRECTORY.replace('/', '\\')
+
+    if not os.path.exists(download_dir):
+        raise HTTPException(status_code=500, detail=f"Base download directory does not exist: {download_dir}")
+
+    model_name = request.model_name
+
+    if model_name and model_name.strip():    
+        sanitized_model_name = model_name.replace('/', '--')
+        model_path = os.path.join(download_dir, sanitized_model_name)
+
+        return DownloadDirectoryResponse(path=model_path)
+    else:
+        return DownloadDirectoryResponse(path=download_dir)
+    
 
 @router.post(
     "/list_model_files/",

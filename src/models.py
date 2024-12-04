@@ -190,3 +190,14 @@ class ModelInfoResponse(BaseModel):
 
     class Config:
         protected_namespaces = ()
+
+
+class DownloadDirectoryRequest(BaseModel):
+    model_name: Optional[str] = None
+    class Config:
+        protected_namespaces = ()    
+
+class DownloadDirectoryResponse(BaseModel):
+    path: str 
+    class Config:
+        protected_namespaces = ()           
