@@ -8,9 +8,9 @@ This **Local LLM server** application is a Windows service application designed 
 
 - **Model Management**: Users can easily download, mount, unmount, and delete Hugging Face models. Once a model is downloaded and mounted, it is accessible for inference locally, allowing for fast and efficient processing without repeated downloads.
 
-- **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages seamlessly. Users can specify source and target languages to customize their translation tasks.
+- **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages.
 
-- **Text Generation**: Beyond translation, the application also supports advanced text generation tasks. Users can leverage models to generate contextual text based on provided prompts, ideal for applications such as chatbots, storytelling, or any scenario that requires dynamic text generation.
+- **Text Generation**: Leverage models to generate contextual text based on provided prompts, ideal for translation tasks that requires dynamic text generation.
 
 - **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.
 
