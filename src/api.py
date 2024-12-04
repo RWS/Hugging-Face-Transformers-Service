@@ -75,7 +75,7 @@ def get_download_path(request: DownloadDirectoryRequest):
     summary="List Model Files with Sizes",
     description=(
         "Retrieves the list of available files in the specified Hugging Face model repository, "
-        "including each file's size when available."
+        "including each file's size when available. Only files in the root directory are listed."
     ),
     response_model=ListModelFilesResponse,
     responses={
@@ -102,22 +102,29 @@ def get_download_path(request: DownloadDirectoryRequest):
 )
 async def list_model_files_endpoint(
     request: ListModelFilesRequest
-) -> ListModelFilesResponse:     
+) -> ListModelFilesResponse:
+    """
+    Retrieves the list of available files in the specified Hugging Face model repository,
+    including each file's size when available. Only files in the root directory are listed.
+    """
+    
     model_name = request.model_name
-    api_key = request.api_key if request.api_key else config.HUGGINGFACE_TOKEN 
+    api_key = request.api_key or os.getenv("HUGGINGFACE_TOKEN")
+    
+    if not model_name:
+        raise HTTPException(status_code=400, detail="`model_name` must be provided.")
+    
     logger.info(f"Received list files request for model: {model_name}")
+    
     try:
         # Fetch model information using Hugging Face Hub API
         info = await asyncio.to_thread(fetch_model_info, model_name, api_key)
-        
-        logger.debug(f"Type of 'info': {type(info)}")
-        logger.debug(f"Attributes of 'info': {dir(info)}")
         
         if not hasattr(info, 'siblings'):
             raise AttributeError("ModelInfo object has no attribute 'siblings'")
         
         files_info = []
-        
+
         # Extract the default branch for accurate download URLs
         # default_branch = info.sha  # Alternatively, use info.default_branch if available
         # if hasattr(info, 'default_branch') and info.default_branch:
@@ -126,17 +133,22 @@ async def list_model_files_endpoint(
         for file in info.siblings:
             filename = file.rfilename
             if not filename:
-                continue 
+                continue
             
+            # **Filter Out Non-Root Files**
+            if '/' in filename or '\\' in filename:
+                logger.debug(f"Skipping non-root file: {filename}")
+                continue
+                        
             download_url = hf_hub_url(
                 repo_id=model_name,
                 filename=filename
-                #revision=default_branch
+                # revision=default_branch
             )
-            
+                       
             if getattr(file, 'size', None) is not None:
                 formatted_size = format_size(file.size)
-            else:            
+            else:
                 size_bytes = await get_file_size_via_head(download_url)
                 if size_bytes is not None:
                     formatted_size = format_size(size_bytes)
@@ -146,7 +158,7 @@ async def list_model_files_endpoint(
                         formatted_size = format_size(size_bytes)
                     else:
                         formatted_size = "Unknown"
-            
+                                  
             files_info.append(
                 ModelFileInfo(
                     file_name=filename,
@@ -155,16 +167,16 @@ async def list_model_files_endpoint(
                 )
             )
         
-        logger.info(f"Retrieved {len(files_info)} files from model '{model_name}'")
-        return {"files": files_info}
-    
+        logger.info(f"Retrieved {len(files_info)} root files from model '{model_name}'")
+        return ListModelFilesResponse(files=files_info)
+   
     except AttributeError as ae:
         error_message = f"Error accessing model files: {str(ae)}"
-        logger.error(f"Error: {error_message}")
+        logger.error(f"AttributeError: {error_message}")
         raise HTTPException(status_code=400, detail=error_message)
     except Exception as e:
         error_message = f"Error fetching files for model '{model_name}': {str(e)}"
-        logger.error(f"Error: {error_message}")
+        logger.error(f"Exception: {error_message}")
         raise HTTPException(status_code=400, detail=error_message)
     
 @router.get(
