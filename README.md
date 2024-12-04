@@ -2,7 +2,8 @@
 
 ## Overview
 
-This **Local LLM server** application is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks. The application is built leveraging FastAPI, Python and is able to run a wide selection of Hugging Face LLMs models. It can run either as a local Windows service or can be included in a Docker container enabling users to download and mount models locally.
+This **Local LLM server** is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks.  
+The application is built leveraging FastAPI, Python and is able to run a wide selection of Hugging Face LLMs models. It can run either as a local Windows service or can be included in a Docker container enabling users to download and mount models locally.
 
 ### Key Features
 
@@ -173,6 +174,7 @@ HuggingFace-TS.exe
 
 - `GET /list_models/`: Retrieve a list of all downloaded models from the `HUGGINGFACE_MODELS_DIR` directory, including their names and types.
 - `GET /model_info/`: Retrieve model information, including configuration details and types supported.
+- `POST /download_directory/`: Retrieves the current download directory, including the `model_name` if provided and not empty.
 - `POST /list_model_files/`: Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available.
 - `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
 - `WS /ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
