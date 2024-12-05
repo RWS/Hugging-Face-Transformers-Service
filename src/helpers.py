@@ -35,6 +35,7 @@ MODEL_TYPE_MAPPING = {
     "mistral": "text-generation",
     "qwen2": "text-generation",
     "t5": "translation",   
+    "xglm": "text-generation"
 }
 
 def get_model_type(task: str):

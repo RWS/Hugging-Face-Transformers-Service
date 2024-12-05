@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Union, List, Dict, Any, Optional
 
 
@@ -17,34 +17,73 @@ class TranslationRequest(BaseModel):
             }
         }
 
+
 class TextGenerationRequest(BaseModel):
     model_name: str = Field(
-        default=None,
-        description="The name of the text generation model to use.")
-    prompt: List[Dict[str, str]] = Field(
-        default=[
-            {"role": "system", "content": "you are a helpful assistant"},
-            {"role": "user", "content": "Please generate some text based on the following prompt."}
-        ],
-        description="The User Prompt comprises of custom instructions provided by the user."
+        ...,  # Changed from default=None to ... to make it required
+        description="The name of the text generation model to use."
     )
-    max_tokens: int = Field(default=250, description="The maximum number of tokens to generate.")
-    temperature: float = Field(default=1.0, description="Sampling temperature for generation.")
-    result_type: str = Field(default='assistant', description="Indicates the response type: 'raw' or 'assistant'.")
+    prompt: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description=(
+            "The User Prompt comprised of custom instructions provided by the user.\n"
+            "Should be a list of messages with roles like 'system', 'user', and 'assistant'."
+        )
+    )
+    prompt_plain: Optional[str] = Field(
+        None,
+        description="A plain text prompt for models that do not use message-based inputs."
+    )
+    max_tokens: int = Field(
+        default=250, 
+        description="The maximum number of tokens to generate."
+    )
+    temperature: float = Field(
+        default=1.0, 
+        description="Sampling temperature for generation."
+    )
+    result_type: str = Field(
+        default='assistant', 
+        description="Indicates the response type: 'raw' or 'assistant'."
+    )
     
+    @model_validator(mode='before')
+    @classmethod
+    def check_prompt_types(cls, values):
+        prompt, prompt_plain = values.get('prompt'), values.get('prompt_plain')
+        if not prompt and not prompt_plain:
+            raise ValueError("Either 'prompt' or 'prompt_plain' must be provided.")
+        if prompt and prompt_plain:
+            raise ValueError("Provide only one of 'prompt' or 'prompt_plain', not both.")
+        return values
+
     class Config:
-        protected_namespaces = ()
         json_schema_extra = {
-            "example": {
-                "model_name": "gpt-3",
-                "prompt": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Generate a response to this prompt."}
-                ],
-                "max_tokens": 100,
-                "temperature": 1.0,
-                "result_type": "assistant"
-            }
+            "examples": [
+                {
+                    "summary": "Chat-like prompt for GPT-4",
+                    "value": {
+                        "model_name": "gpt-4",
+                        "prompt": [
+                            {"role": "system", "content": "You are a helpful assistant."},
+                            {"role": "user", "content": "Generate a response to this prompt."}
+                        ],
+                        "max_tokens": 100,
+                        "temperature": 1.0,
+                        "result_type": "assistant"
+                    }
+                },
+                {
+                    "summary": "Plain text prompt for XGLM",
+                    "value": {
+                        "model_name": "facebook/xglm-7.5B",
+                        "prompt_plain": "Translate the following English sentence to French: 'I love programming.'",
+                        "max_tokens": 100,
+                        "temperature": 0.7,
+                        "result_type": "assistant"
+                    }
+                }
+            ]
         }
 
 class MountModelRequest(BaseModel):
@@ -67,7 +106,6 @@ class MountModelRequest(BaseModel):
         default=None,
         description="Specific *.gguf file name to mount for 'llama' model types."
     )
-    
     class Config:
         protected_namespaces = ()
         json_schema_extra = {

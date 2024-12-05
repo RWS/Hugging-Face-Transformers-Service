@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Include>
-  <?define productVersion = "1.0.3"?>
+  <?define productVersion = "1.0.5"?>
   <?define upgradeCode = "A3098458-7062-4A28-9909-66B8DE893161"?>
   <?define appName = "Hugging Face Transformers Service"?>
   <?define manufacturer = "Developer Experience Team"?>

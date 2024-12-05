@@ -744,7 +744,7 @@ async def mount_model(request: MountModelRequest) -> dict:
                 # Update model configuration with the pad_token_id
                 model.config.pad_token_id = tokenizer.pad_token_id
                 model.resize_token_embeddings(len(tokenizer))
-                    
+
                 trans_pipeline = pipeline(
                     requested_model_type,
                     model=model,
@@ -886,6 +886,8 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
     
     max_tokens = text_generation_request.max_tokens
     messages = text_generation_request.prompt
+    prompt_plain = text_generation_request.prompt_plain
+    temperature = text_generation_request.temperature
     
     try:
         # Determine if the model uses a .gguf file based on the file_name extension
@@ -893,23 +895,30 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
             model_to_use.file_name is not None and
             model_to_use.file_name.lower().endswith(".gguf")
         )
-        
         if is_llama_model:
             # Use llama_cpp's method to generate text
             generated_results = model_to_use.model.create_chat_completion(
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=text_generation_request.temperature
+                temperature=temperature
             )
         else:
-            if max_tokens <= 0:
-                # Fallback to model's max position embeddings if max_tokens is invalid
+            if max_tokens <= 0:             
                 max_tokens = model_to_use.model.config.max_position_embeddings
-            generated_results = model_to_use.pipeline(
-                messages,
-                max_length=max_tokens,
-                temperature=text_generation_request.temperature
-            )
+            
+            if prompt_plain:                
+                generated_results = model_to_use.pipeline(
+                    prompt_plain,
+                    max_length=max_tokens,
+                    temperature=temperature
+                )
+            else:
+                generated_results = model_to_use.pipeline(
+                    messages,
+                    max_length=max_tokens,
+                    temperature=temperature
+                )
+                
         print("Generated results:", generated_results)
     except Exception as e:
         raise HTTPException(
