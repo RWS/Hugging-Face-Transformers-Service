@@ -238,4 +238,23 @@ class DownloadDirectoryRequest(BaseModel):
 class DownloadDirectoryResponse(BaseModel):
     path: str 
     class Config:
-        protected_namespaces = ()           
+        protected_namespaces = ()     
+        
+class FineTuneRequest(BaseModel):
+    client_id: str = Field(..., description="Unique identifier for the client to receive progress updates.")
+    model_path: str = Field(..., description="Local path to the pretrained model.")
+    output_dir: str = Field(..., description="Directory where the fine-tuned model will be saved.")
+    data_file: str = Field(..., description="Path to the CSV data file containing source and target texts.")
+    source_lang: Optional[str] = Field(None, description="Source language code (e.g., 'en_XX'). Required for multilingual models.")
+    target_lang: Optional[str] = Field(None, description="Target language code (e.g., 'it_IT'). Required for multilingual models.")
+    num_train_epochs: Optional[int] = Field(4, description="Number of training epochs.")
+    per_device_train_batch_size: Optional[int] = Field(2, description="Batch size per device during training.")
+    per_device_eval_batch_size: Optional[int] = Field(2, description="Batch size per device during evaluation.")
+    learning_rate: Optional[float] = Field(3e-5, description="Learning rate for the optimizer.")
+    weight_decay: Optional[float] = Field(0.01, description="Weight decay for the optimizer.")
+    max_length: Optional[int] = Field(128, description="Maximum sequence length for tokenization.")
+    save_steps: Optional[int] = Field(50, description="Number of steps between each model save.")
+    save_total_limit: Optional[int] = Field(3, description="Maximum number of checkpoints to save.")  
+    validation_file: Optional[str] = Field(None, description="Path to the CSV validation data file (optional).")  
+    class Config:
+        protected_namespaces = ()     

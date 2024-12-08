@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 #from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_url
-from models import ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
+from models import FineTuneRequest, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModel, AutoConfig, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
@@ -19,6 +19,10 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import aiohttp
+import pandas as pd
+from datasets import Dataset
+from pathlib import Path
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1046,3 +1050,352 @@ async def get_model_info(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+finetune_status = {"fine_tune": "not_started", "details": ""}
+
+
+@router.post("/fine-tune/", summary="Fine-Tune a Pretrained Translation Model",
+             description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
+async def fine_tune(
+    request: FineTuneRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Initiates the fine-tuning of a pretrained translation model based on the provided parameters.
+    The fine-tuning process runs in the background and sends progress updates via WebSocket.
+    """
+    # Validate that the client_id is connected
+    if request.client_id not in manager.active_connections:
+        raise HTTPException(status_code=400, detail=f"Client ID '{request.client_id}' is not connected via WebSocket.")
+    
+    # Add the fine_tune_model task to background
+    background_tasks.add_task(fine_tune_model, request)
+    return {"message": "Fine-tuning has started. You will receive progress updates via WebSocket.", "status": "started"}
+
+# Define an asynchronous function to send progress messages
+async def send_progress(client_id: str, message: str):
+    json_message = json.dumps({"type": "progress", "message": message})
+    await manager.send_message(client_id, json_message)
+
+# Refactored fine_tune_model to handle asynchronous message sending
+def fine_tune_model(request: FineTuneRequest):
+    async def run():
+        try:      
+            client_id = request.client_id
+            await send_progress(client_id, "Fine-tuning process started.")
+            logger.info("Starting fine-tuning process.")
+
+            # Validate paths
+            if not Path(request.model_path).exists():
+                raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
+            logger.info(f"Model path '{request.model_path}' exists.")
+            await send_progress(client_id, f"Model path '{request.model_path}' exists.")
+
+            if not Path(request.data_file).exists():
+                raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
+            logger.info(f"Data file '{request.data_file}' exists.")
+            await send_progress(client_id, f"Data file '{request.data_file}' exists.")
+
+            # Optionally load validation data
+            validation_dataset = None
+            if request.validation_file:
+                if not Path(request.validation_file).exists():
+                    raise FileNotFoundError(f"Validation file '{request.validation_file}' does not exist.")
+                logger.info(f"Validation file '{request.validation_file}' exists.")
+                await send_progress(client_id, f"Validation file '{request.validation_file}' exists.")
+                df_val = pd.read_csv(request.validation_file)
+                if 'src_text' not in df_val.columns or 'tgt_text' not in df_val.columns:
+                    raise ValueError("Validation CSV data file must contain 'src_text' and 'tgt_text' columns.")
+                df_val['src_text'] = df_val['src_text'].astype(str).fillna('').str.strip()
+                df_val['tgt_text'] = df_val['tgt_text'].astype(str).fillna('').str.strip()
+                df_val = df_val[df_val['tgt_text'] != '']
+                if len(df_val) == 0:
+                    raise ValueError("No valid examples found in the validation dataset after filtering.")
+                validation_dataset = Dataset.from_pandas(df_val)
+                validation_dataset = validation_dataset.rename_column("src_text", "source")
+                validation_dataset = validation_dataset.rename_column("tgt_text", "target")
+                logger.info("Validation dataset loaded and prepared.")
+                await send_progress(client_id, "Validation dataset loaded and prepared.")
+
+            # Load tokenizer and model
+            tokenizer = AutoTokenizer.from_pretrained(request.model_path)
+            model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
+            logger.info("Tokenizer and Model loaded successfully.")
+            await send_progress(client_id, "Tokenizer and Model loaded successfully.")
+
+            # Detect if the model is multilingual by checking lang_code_to_id
+            is_multilingual = False
+            if hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
+                is_multilingual = True
+                logger.info("Model is detected as multilingual based on tokenizer.")
+                await send_progress(client_id, "Model is detected as multilingual based on tokenizer.")
+
+            if is_multilingual:
+                if not request.source_lang or not request.target_lang:
+                    raise ValueError("Source and target language codes must be provided for multilingual models.")
+                if request.source_lang not in tokenizer.lang_code_to_id:
+                    raise ValueError(f"Unsupported source language code: '{request.source_lang}'")
+                if request.target_lang not in tokenizer.lang_code_to_id:
+                    raise ValueError(f"Unsupported target language code: '{request.target_lang}'")
+                logger.info(f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
+                await send_progress(client_id, f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
+            else:
+                logger.info("Model is detected as non-multilingual. Language codes will be ignored.")
+                await send_progress(client_id, "Model is detected as non-multilingual. Language codes will be ignored.")
+
+            # Create output directory if it doesn't exist
+            os.makedirs(request.output_dir, exist_ok=True)
+            logger.info(f"Output directory '{request.output_dir}' is ready.")
+            await send_progress(client_id, f"Output directory '{request.output_dir}' is ready.")
+
+            # Load and prepare the training dataset
+            df = pd.read_csv(request.data_file)
+            logger.info("Training data file loaded into DataFrame.")
+            await send_progress(client_id, "Training data file loaded into DataFrame.")
+
+            if 'src_text' not in df.columns or 'tgt_text' not in df.columns:
+                raise ValueError("CSV data file must contain 'src_text' and 'tgt_text' columns.")
+            logger.info("Training CSV data file contains required columns.")
+            await send_progress(client_id, "Training CSV data file contains required columns.")
+
+            df['src_text'] = df['src_text'].astype(str).fillna('').str.strip()
+            df['tgt_text'] = df['tgt_text'].astype(str).fillna('').str.strip()
+            logger.info("Converted 'src_text' and 'tgt_text' to strings and handled missing values.")
+            await send_progress(client_id, "Converted 'src_text' and 'tgt_text' to strings and handled missing values.")
+
+            # Remove rows where 'tgt_text' is empty
+            initial_count = len(df)
+            df = df[df['tgt_text'] != '']
+            final_count = len(df)
+            logger.info(f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
+            await send_progress(client_id, f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
+            if final_count == 0:
+                raise ValueError("No valid examples found in the dataset after filtering out empty 'tgt_text'.")
+
+            # Prepare the dataset
+            dataset = Dataset.from_pandas(df)
+            dataset = dataset.rename_column("src_text", "source")
+            dataset = dataset.rename_column("tgt_text", "target")
+            logger.info("Training dataset prepared and columns renamed.")
+            await send_progress(client_id, "Training dataset prepared and columns renamed.")
+
+            # Define the preprocessing functions
+            if is_multilingual:
+                async def preprocess_function(examples):
+                    inputs = examples["source"]
+                    targets = examples["target"]
+
+                    # Prepend target language token to the inputs to specify translation direction
+                    inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
+                    
+                    # Ensure all targets are non-empty strings
+                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
+
+                    # Send a sample for debugging
+                    if len(inputs) > 0:
+                        sample_input = inputs[0]
+                        sample_target = targets[0]
+                        await send_progress(client_id, f"Preprocessed Input Sample: {sample_input}")
+                        await send_progress(client_id, f"Preprocessed Target Sample: {sample_target}")
+
+                    # Set source and target languages
+                    tokenizer.src_lang = request.source_lang
+                    tokenizer.tgt_lang = request.target_lang
+                    await send_progress(client_id, f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
+
+                    # Tokenize the inputs and targets
+                    try:
+                        model_inputs = tokenizer(
+                            inputs,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length"
+                        )
+                        await send_progress(client_id, "Input texts tokenized.")
+                    except Exception as e:
+                        await send_progress(client_id, f"Error tokenizing inputs: {e}")
+                        raise e
+
+                    with tokenizer.as_target_tokenizer():
+                        labels = tokenizer(
+                            targets,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length",
+                        )
+                    await send_progress(client_id, "Target texts tokenized.")
+
+                    # Assign labels
+                    labels_ids = labels["input_ids"]
+                    model_inputs["labels"] = labels_ids
+                    await send_progress(client_id, "Labels assigned to model inputs.")
+                    return model_inputs
+
+            else:
+                async def preprocess_function(examples):
+                    inputs = examples["source"]
+                    targets = examples["target"]
+
+                    # No language token prepending for non-multilingual models
+                    
+                    # Ensure all targets are non-empty strings
+                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
+
+                    # Send a sample for debugging
+                    if len(inputs) > 0:
+                        sample_input = inputs[0]
+                        sample_target = targets[0]
+                        await send_progress(client_id, f"Preprocessed Input Sample: {sample_input}")
+                        await send_progress(client_id, f"Preprocessed Target Sample: {sample_target}")
+
+                    # Tokenize the inputs
+                    try:
+                        model_inputs = tokenizer(
+                            inputs,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length"
+                        )
+                        await send_progress(client_id, "Input texts tokenized.")
+                    except Exception as e:
+                        await send_progress(client_id, f"Error tokenizing inputs: {e}")
+                        raise e
+
+                    with tokenizer.as_target_tokenizer():
+                        labels = tokenizer(
+                            targets,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length",
+                        )
+                    await send_progress(client_id, "Target texts tokenized.")
+
+                    # Assign labels
+                    labels_ids = labels["input_ids"]
+                    model_inputs["labels"] = labels_ids
+                    await send_progress(client_id, "Labels assigned to model inputs.")
+                    return model_inputs
+
+            # Apply preprocessing to the training dataset
+            logger.info("Applying preprocessing to the training dataset.")
+            await send_progress(client_id, "Applying preprocessing to the training dataset.")
+            tokenized_dataset = dataset.map(preprocess_function, batched=True, remove_columns=['source', 'target'])
+            tokenized_dataset.set_format("torch")
+            logger.info("Training dataset tokenization complete.")
+            await send_progress(client_id, "Training dataset tokenization complete.")
+
+            # Optionally prepare validation dataset
+            if validation_dataset:
+                async def preprocess_validation(examples):
+                    inputs = examples["source"]
+                    targets = examples["target"]
+
+                    if is_multilingual:
+                        inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
+                    
+                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
+
+                    if is_multilingual:
+                        tokenizer.src_lang = request.source_lang
+                        tokenizer.tgt_lang = request.target_lang
+
+                    try:
+                        model_inputs = tokenizer(
+                            inputs,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length"
+                        )
+                        await send_progress(client_id, "Validation input texts tokenized.")
+                    except Exception as e:
+                        await send_progress(client_id, f"Error tokenizing validation inputs: {e}")
+                        raise e
+
+                    with tokenizer.as_target_tokenizer():
+                        labels = tokenizer(
+                            targets,
+                            max_length=request.max_length,
+                            truncation=True,
+                            padding="max_length",
+                        )
+                    await send_progress(client_id, "Validation target texts tokenized.")
+
+                    model_inputs["labels"] = labels["input_ids"]
+                    await send_progress(client_id, "Validation labels assigned to model inputs.")
+                    return model_inputs
+
+                logger.info("Applying preprocessing to the validation dataset.")
+                await send_progress(client_id, "Applying preprocessing to the validation dataset.")
+                tokenized_validation = validation_dataset.map(preprocess_validation, batched=True, remove_columns=['source', 'target'])
+                tokenized_validation.set_format("torch")
+                logger.info("Validation dataset tokenization complete.")
+                await send_progress(client_id, "Validation dataset tokenization complete.")
+            else:
+                tokenized_validation = None
+                logger.info("No validation dataset provided.")
+                await send_progress(client_id, "No validation dataset provided.")
+
+            # Define training arguments
+            training_args = TrainingArguments(
+                output_dir=request.output_dir,
+                num_train_epochs=request.num_train_epochs,         
+                per_device_train_batch_size=request.per_device_train_batch_size,
+                per_device_eval_batch_size=request.per_device_eval_batch_size,
+                learning_rate=request.learning_rate,
+                weight_decay=request.weight_decay,
+                logging_dir=os.path.join(request.output_dir, "logs"),
+                logging_steps=10,                      
+                save_steps=request.save_steps,                     
+                save_total_limit=request.save_total_limit,
+                save_strategy="steps",
+                evaluation_strategy="epoch" if tokenized_validation else "no",
+                eval_steps=request.save_steps if tokenized_validation else None,
+                load_best_model_at_end=True if tokenized_validation else False,
+                metric_for_best_model="loss",  # Could be customized
+                fp16=torch.cuda.is_available(),
+            )        
+            logger.info("Training arguments set.")
+            await send_progress(client_id, "Training arguments set.")
+
+            # Initialize the Trainer
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                train_dataset=tokenized_dataset,
+                eval_dataset=tokenized_validation,
+                tokenizer=tokenizer,
+                # You can define compute_metrics if needed
+            )
+            logger.info("Trainer initialized.")
+            await send_progress(client_id, "Trainer initialized.")
+           
+            logger.info("Commencing training.")
+            await send_progress(client_id, "Commencing training.")
+            trainer.train()
+            logger.info("Training completed.")
+            await send_progress(client_id, "Training completed.")
+           
+            trainer.save_model(request.output_dir)
+            tokenizer.save_pretrained(request.output_dir)
+            logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
+            await send_progress(client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
+           
+            # Final status update
+            success_message = "Fine-tuning process completed successfully."
+            logger.info(success_message)
+            await send_progress(client_id, success_message)
+        
+        except Exception as e:         
+            error_message = f"Error during fine-tuning: {e}"
+            logger.error(error_message)
+            await send_progress(request.client_id, error_message)
+            # Depending on how you want to handle errors in background tasks,
+            # you might log them or implement additional error handling.
+    
+    # Run the async function in a new event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run())
+    loop.close()
