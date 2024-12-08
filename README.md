@@ -11,13 +11,13 @@ The application is built leveraging FastAPI, Python and is able to run a wide se
 
 - **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages.
 
+- **Fine-Tuning**: Facilitate the fine-tuning of pretrained translation models with custom datasets, allowing users to adapt models to specific domains or language nuances.
+
 - **Text Generation**: Leverage models to generate contextual text based on provided prompts, ideal for translation tasks that requires dynamic text generation.
 
 - **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.
 
 - **Streaming Progress Updates**: For long-running operations such as downloading models, the application provides real-time progress updates, allowing users to monitor the status of their downloads.
-
-<!-- - **Metrics and Monitoring**: Integrates with Prometheus and Grafana for monitoring application performance and resource utilization, ensuring that the application runs smoothly and efficiently. -->
 
 ### Supported Model Types
 
@@ -27,13 +27,43 @@ The following model types are supported, allowing users to leverage state-of-the
 
 - **Translation**: Utilizes `AutoModelForSeq2SeqLM`, enabling users to perform translations between multiple languages seamlessly.
 
-<!-- - **Text2Text Generation**: Also uses `AutoModelForSeq2SeqLM`, designed for tasks that require transforming input text into different output text, such as summarization or question-answering.
-
-- **Summarization**: Uses `AutoModelForSeq2SeqLM` to condense long pieces of text into shorter summaries, preserving the main points and overall meaning. This model is particularly useful for applications that require quick understanding of large documents or articles. -->
-
 - **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
 
 - **Llama**: Implements the `Llama` model from the `llama_cpp` library, designed for conversational tasks and assistant-like interactions. This model excels in generating context-specific responses based on provided messages, making it suitable for chat applications and interactive content generation.
+
+<br>
+
+### Fine-Tuning Translation Models
+
+Enable users to **fine-tune pretrained translation models** with their own datasets, enhancing the model's performance tailored to specific domains or language nuances. This feature currently supports translation models.
+
+#### How It Works
+
+1. **Provide a Fine-Tuning Request**: Submit a POST request to the `/fine-tune/` endpoint with necessary parameters, including the path to the pretrained model, dataset, and desired training configurations.
+2. **Real-Time Progress Updates**: Monitor the fine-tuning progress in real-time via a WebSocket connection established at `/ws/progress/{client_id}`.
+3. **Receive the Fine-Tuned Model**: Upon completion, the fine-tuned model is saved to the specified output directory, ready for deployment or further use.
+
+#### Example Usage
+
+- **Initiate Fine-Tuning**:
+
+  ```json
+  {
+    "client_id": "unique_client_id_123",
+    "model_path": "/path/to/pretrained/model",
+    "output_dir": "/path/to/save/fine-tuned/model",
+    "data_file": "/path/to/data.csv",
+    "source_lang": "en_XX",
+    "target_lang": "it_IT",
+    "num_train_epochs": 5,
+    "per_device_train_batch_size": 4,
+    "learning_rate": 2e-5
+    // ... other parameters
+  }
+  ```
+
+- **Establish WebSocket Connection**:
+  Connect to `/ws/progress/unique_client_id_123` to receive real-time updates during the fine-tuning process.
 
 <br>
 
@@ -183,6 +213,7 @@ HuggingFace-TS.exe
 - `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
 - `POST /translate/`: Translate input text using the mounted translation model.
 - `POST /generate/`: Generate text based on the input prompt using the mounted text generation model..
+- `POST /fine-tune/`: Initiate the fine-tuning of a specified translation model with custom parameters and data. Receive real-time progress updates via WebSocket.
 
 ### Notes
 
