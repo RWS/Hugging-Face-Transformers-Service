@@ -47,7 +47,7 @@
     },
     "/list_model_files/": {
       "post": {
-        "summary": "List Model Files with Sizes",
+        "summary": "List Model Files",
         "description": "Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available. Only files in the root directory are listed.",
         "operationId": "list_model_files_endpoint_list_model_files__post",
         "requestBody": {
@@ -62,7 +62,7 @@
         },
         "responses": {
           "200": {
-            "description": "Successful retrieval of model files with sizes.",
+            "description": "Successful retrieval of model files.",
             "content": {
               "application/json": {
                 "schema": {
@@ -107,7 +107,7 @@
     "/list_models/": {
       "get": {
         "summary": "List downloaded models",
-        "description": "List all downloaded models along with their types, sizes, properties, and loaded gguf files.",
+        "description": "List all downloaded models along with their types, sizes, properties, and mounted files.",
         "operationId": "list_models_list_models__get",
         "responses": {
           "200": {
@@ -267,8 +267,8 @@
     },
     "/unmount_model/": {
       "post": {
-        "summary": "Unmount the Current Model",
-        "description": "Unmount the currently mounted model to free up resources.",
+        "summary": "Unmount Model",
+        "description": "Unmount the mounted model to free up resources.",
         "operationId": "unmount_model_unmount_model__post",
         "requestBody": {
           "content": {
@@ -1029,6 +1029,9 @@
           }
         },
         "type": "object",
+        "required": [
+          "model_name"
+        ],
         "title": "ModelRequest",
         "example": {
           "model_name": "facebook/nllb-200-distilled-600M"
@@ -1044,8 +1047,7 @@
           "model_type": {
             "type": "string",
             "title": "Model Type",
-            "description": "Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama'.",
-            "default": "translation"
+            "description": "Type of model to mount. Supported model types: 'translation', 'text-generation', 'llama'."
           },
           "properties": {
             "anyOf": [
@@ -1076,6 +1078,10 @@
           }
         },
         "type": "object",
+        "required": [
+          "model_name",
+          "model_type"
+        ],
         "title": "MountModelRequest",
         "example": {
           "file_name": "Marco-o1-IQ2_M.gguf",
@@ -1195,7 +1201,8 @@
         },
         "type": "object",
         "required": [
-          "model_name"
+          "model_name",
+          "text"
         ],
         "title": "TranslationRequest",
         "example": {

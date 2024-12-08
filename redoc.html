@@ -14,6 +14,22 @@
   </head>
   <body>
     <!-- Container for ReDoc -->
-    <redoc spec-url="openapi.json"></redoc>
+    <div id="redoc-container"></div>
+    <script>
+      // Embedded OpenAPI Specification
+      const spec = {
+        /* Paste your openapi.json content here */
+      };
+
+      // Initialize ReDoc
+      Redoc.init(
+        spec,
+        {
+          scrollYOffset: "nav",
+          // Optional configuration options
+        },
+        document.getElementById("redoc-container")
+      );
+    </script>
   </body>
 </html>

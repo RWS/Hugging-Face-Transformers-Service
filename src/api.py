@@ -76,7 +76,7 @@ def get_download_path(request: DownloadDirectoryRequest):
 
 @router.post(
     "/list_model_files/",
-    summary="List Model Files with Sizes",
+    summary="List Model Files",
     description=(
         "Retrieves the list of available files in the specified Hugging Face model repository, "
         "including each file's size when available. Only files in the root directory are listed."
@@ -84,7 +84,7 @@ def get_download_path(request: DownloadDirectoryRequest):
     response_model=ListModelFilesResponse,
     responses={
         200: {
-            "description": "Successful retrieval of model files with sizes.",
+            "description": "Successful retrieval of model files.",
             "content": {
                 "application/json": {
                     "example": {
@@ -224,7 +224,7 @@ async def list_model_files_endpoint(
     }
 )
 async def list_models() -> List[ModelInfo]:
-    """List all downloaded models along with their types, sizes, properties, and loaded gguf files."""
+    """List all downloaded models along with their types, sizes, properties, and mounted files."""
    
     models_info = []
     try:    
@@ -783,12 +783,12 @@ async def mount_model(request: MountModelRequest) -> dict:
 
 
 @router.post("/unmount_model/",
-          summary="Unmount the Current Model",
-          description="Unmount the currently mounted model to free up resources.",
+          summary="Unmount Model",
+          description="Unmount the mounted model to free up resources.",
           response_model=dict,
           responses={200: {"content": {"application/json": {"example": {"message": "Model unmounted successfully."}}}}})
 async def unmount_model(request: ModelRequest) -> dict:
-    """Unmounts the currently active model."""
+    """Unmounts the model."""
     
     model_name = request.model_name
     

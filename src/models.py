@@ -3,10 +3,8 @@ from typing import Union, List, Dict, Any, Optional
 
 
 class TranslationRequest(BaseModel):
-    model_name: str = Field(description="The name of the translation model to use.")
-    text: str = Field(
-        default=None,
-        description="The source content that should be translated.")
+    model_name: str = Field(..., description="The name of the translation model to use.")
+    text: str = Field(..., description="The source content that should be translated.")
     
     class Config:
         protected_namespaces = ()
@@ -19,9 +17,7 @@ class TranslationRequest(BaseModel):
 
 
 class TextGenerationRequest(BaseModel):
-    model_name: str = Field(
-        ...,  # Changed from default=None to ... to make it required
-        description="The name of the text generation model to use."
+    model_name: str = Field(..., description="The name of the text generation model to use."
     )
     prompt: Optional[List[Dict[str, str]]] = Field(
         None,
@@ -87,15 +83,12 @@ class TextGenerationRequest(BaseModel):
         }
 
 class MountModelRequest(BaseModel):
-    model_name: str = Field(
-        default=None,
-        description="The Hugging Face model name."
+    model_name: str = Field(...,description="The Hugging Face model name."
     )
-    model_type: str = Field(
-        default="translation",
+    model_type: str = Field(...,
         description=(
             "Type of model to mount. Supported model types: "
-            "'translation', 'text2text-generation', 'text-generation', 'llama'."
+            "'translation', 'text-generation', 'llama'."
         )
     )
     properties: Optional[Dict[str, str]] = Field(
@@ -172,11 +165,7 @@ class DownloadModelRequest(BaseModel):
 
    
 class ModelRequest(BaseModel):
-    model_name: str = Field(
-        default=None,
-        description="The Hugging Face model name"
-    )
-
+    model_name: str = Field(..., description="The Hugging Face model name")
     class Config:
         protected_namespaces = ()
         json_schema_extra = {

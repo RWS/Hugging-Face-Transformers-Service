@@ -165,11 +165,11 @@ python src/main.py
 
 ### Step 9: Access Swagger API & Documentation
 
-You can interact with the API and test its endpoints by visiting:
-[http://localhost:8001/docs](http://localhost:8001/docs)
+[Swagger API - http://localhost:8001/docs](http://localhost:8001/docs)
 
-Documentation:
-[http://localhost:8001/redoc](http://localhost:8001/redoc)
+[API Documentation](https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html)
+
+<!-- [http://localhost:8001/redoc](http://localhost:8001/redoc) -->
 
 <br>
 
