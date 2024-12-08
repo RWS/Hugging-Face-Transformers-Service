@@ -1,0 +1,1241 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hugging Face Transformers Service",
+    "description": "This **Local LLM server** application is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
+    "version": "1.0.5"
+  },
+  "paths": {
+    "/download_directory": {
+      "post": {
+        "summary": "Get Download Path",
+        "description": "Retrieve the current download directory.\n\nIf `model_name` is provided and not empty, include it in the path.",
+        "operationId": "get_download_path_download_directory_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadDirectoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadDirectoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/list_model_files/": {
+      "post": {
+        "summary": "List Model Files with Sizes",
+        "description": "Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available. Only files in the root directory are listed.",
+        "operationId": "list_model_files_endpoint_list_model_files__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListModelFilesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful retrieval of model files with sizes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListModelFilesResponse"
+                },
+                "example": {
+                  "files": [
+                    {
+                      "file_name": "config.json",
+                      "file_size": "15.60 KB",
+                      "download_url": "https://..."
+                    },
+                    {
+                      "file_name": "pytorch_model.bin",
+                      "file_size": "350.45 MB",
+                      "download_url": "https://..."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Model not found."
+          },
+          "400": {
+            "description": "Error due to invalid request or issues fetching model information."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/list_models/": {
+      "get": {
+        "summary": "List downloaded models",
+        "description": "List all downloaded models along with their types, sizes, properties, and loaded gguf files.",
+        "operationId": "list_models_list_models__get",
+        "responses": {
+          "200": {
+            "description": "A list of models available in the cache.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ModelInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Models List Models  Get"
+                },
+                "example": [
+                  {
+                    "model_name": "microsoft/Phi-3.5-mini-instruct",
+                    "model_type": "text-generation",
+                    "model_mounted": true,
+                    "model_size_bytes": "7.12 GB",
+                    "properties": {
+                      "src_lang": "eng_Latn",
+                      "tgt_lang": "ita_Latn"
+                    }
+                  },
+                  {
+                    "model_name": "bartowski/Marco-o1-GGUF",
+                    "model_type": "text-generation",
+                    "model_mounted": true,
+                    "model_size_bytes": "15.3 GB",
+                    "properties": {},
+                    "file_names": [
+                      "Marco-o1-IQ2_M.gguf",
+                      "Marco-o1-Another.gguf"
+                    ],
+                    "loaded_file_name": "Marco-o1-IQ2_M.gguf"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/download_model/": {
+      "post": {
+        "summary": "Download a Model",
+        "description": "Initiates the download of a specified model from the Hugging Face Hub. If the model is already downloaded, it overwrites existing files. Users can specify which files to download. If no files are specified, all files from the model will be downloaded.",
+        "operationId": "download_model_endpoint_download_model__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful model download initiation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Download Model Endpoint Download Model  Post"
+                },
+                "example": {
+                  "status": "Download started.",
+                  "message": "Model 'model_name' is being downloaded."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error in model download due to invalid request or existing download."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mount_model/": {
+      "post": {
+        "summary": "Mount a Model",
+        "description": "Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text-generation'.",
+        "operationId": "mount_model_mount_model__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MountModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Mount Model Mount Model  Post"
+                },
+                "example": {
+                  "message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully.",
+                  "properties": {
+                    "src_lang": "eng_Latn",
+                    "tgt_lang": "ita_Latn"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported model type provided or invalid file_name for 'text-generation' model.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Unsupported model type provided."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Model path or specified gguf file does not exist.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Model path does not exist."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/unmount_model/": {
+      "post": {
+        "summary": "Unmount the Current Model",
+        "description": "Unmount the currently mounted model to free up resources.",
+        "operationId": "unmount_model_unmount_model__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Unmount Model Unmount Model  Post"
+                },
+                "example": {
+                  "message": "Model unmounted successfully."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/delete_model/": {
+      "delete": {
+        "summary": "Delete Local Model",
+        "description": "Delete the local files of a previously mounted model based on the model name.",
+        "operationId": "delete_model_delete_model__delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Delete Model Delete Model  Delete"
+                },
+                "example": {
+                  "message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/translate/": {
+      "post": {
+        "summary": "Translate Text",
+        "description": "Translate input text using the specified translation model.",
+        "operationId": "translate_translate__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/generate/": {
+      "post": {
+        "summary": "Generate Text",
+        "description": "Generate text based on the input prompt using the specified text generation model.",
+        "operationId": "generate_generate__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextGenerationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model_info/": {
+      "get": {
+        "summary": "Retrieve model info",
+        "description": "Retrieve either model configuration or model information.",
+        "operationId": "get_model_info_model_info__get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The name of the Hugging Face model",
+              "title": "Model Name"
+            },
+            "description": "The name of the Hugging Face model"
+          },
+          {
+            "name": "return_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Specify 'config' to retrieve model configuration or 'info' to retrieve model information.",
+              "default": "info",
+              "title": "Return Type"
+            },
+            "description": "Specify 'config' to retrieve model configuration or 'info' to retrieve model information."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInfoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fine-tune/": {
+      "post": {
+        "summary": "Fine-Tune a Pretrained Translation Model",
+        "description": "Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.",
+        "operationId": "fine_tune_fine_tune__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FineTuneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DownloadDirectoryRequest": {
+        "properties": {
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          }
+        },
+        "type": "object",
+        "title": "DownloadDirectoryRequest"
+      },
+      "DownloadDirectoryResponse": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "DownloadDirectoryResponse"
+      },
+      "DownloadModelRequest": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "title": "Client Id",
+            "description": "Unique identifier for the client"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The Hugging Face model repository name"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Your Hugging Face API token if accessing private repositories."
+          },
+          "files_to_download": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files To Download",
+            "description": "List of specific files to download. If not provided, all files will be downloaded."
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "model_name"
+        ],
+        "title": "DownloadModelRequest",
+        "examples": [
+          {
+            "summary": "Download only the second gguf file (Q2)",
+            "value": {
+              "client_id": "unique_client_id_123",
+              "files_to_download": [
+                "pytorch_model.bin",
+                "tokenizer.json",
+                "config.json",
+                "README.md"
+              ],
+              "model_name": "facebook/nllb-200-distilled-600M"
+            }
+          }
+        ]
+      },
+      "FineTuneRequest": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "title": "Client Id",
+            "description": "Unique identifier for the client to receive progress updates."
+          },
+          "model_path": {
+            "type": "string",
+            "title": "Model Path",
+            "description": "Local path to the pretrained model."
+          },
+          "output_dir": {
+            "type": "string",
+            "title": "Output Dir",
+            "description": "Directory where the fine-tuned model will be saved."
+          },
+          "data_file": {
+            "type": "string",
+            "title": "Data File",
+            "description": "Path to the CSV data file containing source and target texts."
+          },
+          "source_lang": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Lang",
+            "description": "Source language code (e.g., 'en_XX'). Required for multilingual models."
+          },
+          "target_lang": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Lang",
+            "description": "Target language code (e.g., 'it_IT'). Required for multilingual models."
+          },
+          "num_train_epochs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Train Epochs",
+            "description": "Number of training epochs.",
+            "default": 4
+          },
+          "per_device_train_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Device Train Batch Size",
+            "description": "Batch size per device during training.",
+            "default": 2
+          },
+          "per_device_eval_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Device Eval Batch Size",
+            "description": "Batch size per device during evaluation.",
+            "default": 2
+          },
+          "learning_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Rate",
+            "description": "Learning rate for the optimizer.",
+            "default": 3e-05
+          },
+          "weight_decay": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Decay",
+            "description": "Weight decay for the optimizer.",
+            "default": 0.01
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length",
+            "description": "Maximum sequence length for tokenization.",
+            "default": 128
+          },
+          "save_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Save Steps",
+            "description": "Number of steps between each model save.",
+            "default": 50
+          },
+          "save_total_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Save Total Limit",
+            "description": "Maximum number of checkpoints to save.",
+            "default": 3
+          },
+          "validation_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation File",
+            "description": "Path to the CSV validation data file (optional)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "model_path",
+          "output_dir",
+          "data_file"
+        ],
+        "title": "FineTuneRequest"
+      },
+      "GeneratedResponse": {
+        "properties": {
+          "generated_response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Generated Response",
+            "description": "The generated text from the model based on the provided prompt. It can be either a string (when 'assistant' response is requested) or a list of dictionaries containing raw response data.",
+            "example": "Il gatto \u00e8 sul tavolo."
+          }
+        },
+        "type": "object",
+        "required": [
+          "generated_response"
+        ],
+        "title": "GeneratedResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ListModelFilesRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The Hugging Face model repository name, e.g., 'username/model-name'"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Your Hugging Face API token if accessing private repositories."
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name"
+        ],
+        "title": "ListModelFilesRequest"
+      },
+      "ListModelFilesResponse": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ModelFileInfo"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "ListModelFilesResponse"
+      },
+      "ModelFileInfo": {
+        "properties": {
+          "file_name": {
+            "type": "string",
+            "title": "File Name"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_name"
+        ],
+        "title": "ModelFileInfo"
+      },
+      "ModelInfo": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "model_type": {
+            "type": "string",
+            "title": "Model Type"
+          },
+          "model_mounted": {
+            "type": "boolean",
+            "title": "Model Mounted"
+          },
+          "model_size_bytes": {
+            "type": "string",
+            "title": "Model Size Bytes"
+          },
+          "properties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Properties"
+          },
+          "file_names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Names"
+          },
+          "loaded_file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loaded File Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name",
+          "model_type",
+          "model_mounted",
+          "model_size_bytes",
+          "properties"
+        ],
+        "title": "ModelInfo"
+      },
+      "ModelInfoResponse": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "minimal_info": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimal Info"
+          },
+          "info": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Info"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name"
+        ],
+        "title": "ModelInfoResponse"
+      },
+      "ModelRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The Hugging Face model name"
+          }
+        },
+        "type": "object",
+        "title": "ModelRequest",
+        "example": {
+          "model_name": "facebook/nllb-200-distilled-600M"
+        }
+      },
+      "MountModelRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The Hugging Face model name."
+          },
+          "model_type": {
+            "type": "string",
+            "title": "Model Type",
+            "description": "Type of model to mount. Supported model types: 'translation', 'text2text-generation', 'text-generation', 'llama'.",
+            "default": "translation"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties",
+            "description": "Optional dictionary of additional properties (e.g., src_lang, tgt_lang)."
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name",
+            "description": "Specific *.gguf file name to mount for 'llama' model types."
+          }
+        },
+        "type": "object",
+        "title": "MountModelRequest",
+        "example": {
+          "file_name": "Marco-o1-IQ2_M.gguf",
+          "model_name": "facebook/nllb-200-distilled-600M",
+          "model_type": "translation",
+          "properties": {
+            "src_lang": "eng_Latn",
+            "tgt_lang": "ita_Latn"
+          }
+        }
+      },
+      "TextGenerationRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The name of the text generation model to use."
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt",
+            "description": "The User Prompt comprised of custom instructions provided by the user.\nShould be a list of messages with roles like 'system', 'user', and 'assistant'."
+          },
+          "prompt_plain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Plain",
+            "description": "A plain text prompt for models that do not use message-based inputs."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "description": "The maximum number of tokens to generate.",
+            "default": 250
+          },
+          "temperature": {
+            "type": "number",
+            "title": "Temperature",
+            "description": "Sampling temperature for generation.",
+            "default": 1.0
+          },
+          "result_type": {
+            "type": "string",
+            "title": "Result Type",
+            "description": "Indicates the response type: 'raw' or 'assistant'.",
+            "default": "assistant"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name"
+        ],
+        "title": "TextGenerationRequest",
+        "examples": [
+          {
+            "summary": "Chat-like prompt for GPT-4",
+            "value": {
+              "max_tokens": 100,
+              "model_name": "gpt-4",
+              "prompt": [
+                {
+                  "content": "You are a helpful assistant.",
+                  "role": "system"
+                },
+                {
+                  "content": "Generate a response to this prompt.",
+                  "role": "user"
+                }
+              ],
+              "result_type": "assistant",
+              "temperature": 1.0
+            }
+          },
+          {
+            "summary": "Plain text prompt for XGLM",
+            "value": {
+              "max_tokens": 100,
+              "model_name": "facebook/xglm-7.5B",
+              "prompt_plain": "Translate the following English sentence to French: 'I love programming.'",
+              "result_type": "assistant",
+              "temperature": 0.7
+            }
+          }
+        ]
+      },
+      "TranslationRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "The name of the translation model to use."
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The source content that should be translated."
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name"
+        ],
+        "title": "TranslationRequest",
+        "example": {
+          "model_name": "facebook/nllb-200-distilled-600M",
+          "text": "The cat is on the table."
+        }
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
