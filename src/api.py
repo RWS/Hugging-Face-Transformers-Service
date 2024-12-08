@@ -4,7 +4,7 @@ from huggingface_hub import hf_hub_url
 from models import FineTuneRequest, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
-from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
+from helpers import run_map, get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline
 from llama_cpp import Llama
@@ -1053,9 +1053,6 @@ async def get_model_info(
     
 
 
-finetune_status = {"fine_tune": "not_started", "details": ""}
-
-
 @router.post("/fine-tune/", summary="Fine-Tune a Pretrained Translation Model",
              description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
 async def fine_tune(
@@ -1074,12 +1071,10 @@ async def fine_tune(
     background_tasks.add_task(fine_tune_model, request)
     return {"message": "Fine-tuning has started. You will receive progress updates via WebSocket.", "status": "started"}
 
-# Define an asynchronous function to send progress messages
 async def send_progress(client_id: str, message: str):
     json_message = json.dumps({"type": "progress", "message": message})
     await manager.send_message(client_id, json_message)
 
-# Refactored fine_tune_model to handle asynchronous message sending
 def fine_tune_model(request: FineTuneRequest):
     async def run():
         try:      
@@ -1088,12 +1083,12 @@ def fine_tune_model(request: FineTuneRequest):
             logger.info("Starting fine-tuning process.")
 
             # Validate paths
-            if not Path(request.model_path).exists():
+            if not os.path.exists(request.model_path):
                 raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
             logger.info(f"Model path '{request.model_path}' exists.")
             await send_progress(client_id, f"Model path '{request.model_path}' exists.")
 
-            if not Path(request.data_file).exists():
+            if not os.path.exists(request.data_file):
                 raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
             logger.info(f"Data file '{request.data_file}' exists.")
             await send_progress(client_id, f"Data file '{request.data_file}' exists.")
@@ -1101,18 +1096,22 @@ def fine_tune_model(request: FineTuneRequest):
             # Optionally load validation data
             validation_dataset = None
             if request.validation_file:
-                if not Path(request.validation_file).exists():
+                if not os.path.exists(request.validation_file):
                     raise FileNotFoundError(f"Validation file '{request.validation_file}' does not exist.")
                 logger.info(f"Validation file '{request.validation_file}' exists.")
                 await send_progress(client_id, f"Validation file '{request.validation_file}' exists.")
+                
                 df_val = pd.read_csv(request.validation_file)
+                
                 if 'src_text' not in df_val.columns or 'tgt_text' not in df_val.columns:
                     raise ValueError("Validation CSV data file must contain 'src_text' and 'tgt_text' columns.")
                 df_val['src_text'] = df_val['src_text'].astype(str).fillna('').str.strip()
                 df_val['tgt_text'] = df_val['tgt_text'].astype(str).fillna('').str.strip()
                 df_val = df_val[df_val['tgt_text'] != '']
+                
                 if len(df_val) == 0:
                     raise ValueError("No valid examples found in the validation dataset after filtering.")
+                
                 validation_dataset = Dataset.from_pandas(df_val)
                 validation_dataset = validation_dataset.rename_column("src_text", "source")
                 validation_dataset = validation_dataset.rename_column("tgt_text", "target")
@@ -1180,8 +1179,7 @@ def fine_tune_model(request: FineTuneRequest):
             dataset = dataset.rename_column("tgt_text", "target")
             logger.info("Training dataset prepared and columns renamed.")
             await send_progress(client_id, "Training dataset prepared and columns renamed.")
-
-            # Define the preprocessing functions
+            
             if is_multilingual:
                 async def preprocess_function(examples):
                     inputs = examples["source"]
@@ -1281,7 +1279,7 @@ def fine_tune_model(request: FineTuneRequest):
             # Apply preprocessing to the training dataset
             logger.info("Applying preprocessing to the training dataset.")
             await send_progress(client_id, "Applying preprocessing to the training dataset.")
-            tokenized_dataset = dataset.map(preprocess_function, batched=True, remove_columns=['source', 'target'])
+            tokenized_dataset = await run_map(dataset, preprocess_function, client_id)
             tokenized_dataset.set_format("torch")
             logger.info("Training dataset tokenization complete.")
             await send_progress(client_id, "Training dataset tokenization complete.")
@@ -1328,7 +1326,7 @@ def fine_tune_model(request: FineTuneRequest):
 
                 logger.info("Applying preprocessing to the validation dataset.")
                 await send_progress(client_id, "Applying preprocessing to the validation dataset.")
-                tokenized_validation = validation_dataset.map(preprocess_validation, batched=True, remove_columns=['source', 'target'])
+                tokenized_validation = await run_map(validation_dataset, preprocess_validation, client_id)
                 tokenized_validation.set_format("torch")
                 logger.info("Validation dataset tokenization complete.")
                 await send_progress(client_id, "Validation dataset tokenization complete.")
@@ -1336,8 +1334,7 @@ def fine_tune_model(request: FineTuneRequest):
                 tokenized_validation = None
                 logger.info("No validation dataset provided.")
                 await send_progress(client_id, "No validation dataset provided.")
-
-            # Define training arguments
+        
             training_args = TrainingArguments(
                 output_dir=request.output_dir,
                 num_train_epochs=request.num_train_epochs,         
@@ -1353,20 +1350,18 @@ def fine_tune_model(request: FineTuneRequest):
                 evaluation_strategy="epoch" if tokenized_validation else "no",
                 eval_steps=request.save_steps if tokenized_validation else None,
                 load_best_model_at_end=True if tokenized_validation else False,
-                metric_for_best_model="loss",  # Could be customized
+                metric_for_best_model="loss",
                 fp16=torch.cuda.is_available(),
             )        
             logger.info("Training arguments set.")
             await send_progress(client_id, "Training arguments set.")
-
-            # Initialize the Trainer
+           
             trainer = Trainer(
                 model=model,
                 args=training_args,
                 train_dataset=tokenized_dataset,
                 eval_dataset=tokenized_validation,
-                tokenizer=tokenizer,
-                # You can define compute_metrics if needed
+                tokenizer=tokenizer,                
             )
             logger.info("Trainer initialized.")
             await send_progress(client_id, "Trainer initialized.")
@@ -1381,8 +1376,7 @@ def fine_tune_model(request: FineTuneRequest):
             tokenizer.save_pretrained(request.output_dir)
             logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
             await send_progress(client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
-           
-            # Final status update
+                     
             success_message = "Fine-tuning process completed successfully."
             logger.info(success_message)
             await send_progress(client_id, success_message)
@@ -1390,11 +1384,8 @@ def fine_tune_model(request: FineTuneRequest):
         except Exception as e:         
             error_message = f"Error during fine-tuning: {e}"
             logger.error(error_message)
-            await send_progress(request.client_id, error_message)
-            # Depending on how you want to handle errors in background tasks,
-            # you might log them or implement additional error handling.
-    
-    # Run the async function in a new event loop
+            await send_progress(request.client_id, error_message)      
+  
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(run())

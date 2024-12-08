@@ -2,6 +2,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from config import config
 from huggingface_hub import HfApi
 from typing import Optional
+from datasets import Dataset
 import os
 import shutil
 import glob
@@ -9,6 +10,7 @@ import re
 import json
 import aiohttp
 import logging
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -330,3 +332,15 @@ async def get_file_size_via_get(url: str) -> Optional[int]:
     return None
 
 
+async def run_map(dataset: Dataset, preprocess_function, client_id: str):
+    from functools import partial
+
+    def sync_preprocess(examples):
+        # Create a coroutine for each batch
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(preprocess_function(examples))
+        loop.close()
+        return result
+
+    return dataset.map(sync_preprocess, batched=True, remove_columns=['source', 'target'])
