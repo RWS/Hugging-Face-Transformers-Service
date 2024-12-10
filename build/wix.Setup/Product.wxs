@@ -40,14 +40,6 @@
     </Feature>
 
     <InstallExecuteSequence>
-      <!-- VC_redist Installation -->
-      <Custom Action="Install_VCRedist_x86" Before="InstallFinalize">
-        NOT VCREDIST_X86_INSTALLED AND NOT REMOVE
-      </Custom>
-      <Custom Action="Install_VCRedist_x64" Before="InstallFinalize">
-        NOT VCREDIST_X64_INSTALLED AND NOT REMOVE
-      </Custom>
-
       <Custom Action="SaveUserConfigurationAction" After="InstallFinalize">NOT Installed</Custom>
     </InstallExecuteSequence>
 
@@ -63,48 +55,6 @@
         <Directory Id="ApplicationProgramsFolder" Name="$(var.appName)"/>
       </Directory>
     </Directory>
-  </Fragment>
-
-  <Fragment>
-    <!-- Include VC_redist Binaries -->
-    <Binary Id="VCRedist_x86" SourceFile="dependencies\VC_redist.x86.exe" />
-    <Binary Id="VCRedist_x64" SourceFile="dependencies\VC_redist.x64.exe" />
-  </Fragment>
-
-  <Fragment>
-    <Property Id="VCREDIST_X86_INSTALLED">
-      <RegistrySearch Id="VCRedist_x86_Search"
-                      Root="HKLM"
-                      Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86"
-                      Name="Installed"
-                      Type="raw" />
-    </Property>
-
-    <Property Id="VCREDIST_X64_INSTALLED">
-      <RegistrySearch Id="VCRedist_x64_Search"
-                      Root="HKLM"
-                      Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
-                      Name="Installed"
-                      Type="raw" />
-    </Property>
-  </Fragment>
-
-  <Fragment>
-    <CustomAction Id="Install_VCRedist_x86"
-                  BinaryKey="VCRedist_x86"
-                  ExeCommand="/install /quiet /norestart"
-                  Execute="deferred"
-                  Return="check"
-                  Impersonate="no"
-                  HideTarget="yes" />
-
-    <CustomAction Id="Install_VCRedist_x64"
-                  BinaryKey="VCRedist_x64"
-                  ExeCommand="/install /quiet /norestart"
-                  Execute="deferred"
-                  Return="check"
-                  Impersonate="no"
-                  HideTarget="yes" />
   </Fragment>
 
   <Fragment>
@@ -129,9 +79,7 @@
     </ComponentGroup>
   </Fragment>
 
-
   <Fragment>
-
     <!-- Desktop Shortcut -->
     <DirectoryRef Id="DesktopFolder">
       <Component Id="ApplicationShortcutDesktop" Guid="A84CB083-1030-49CF-A32B-1801CE685FDD">
@@ -146,7 +94,6 @@
       </Component>
     </DirectoryRef>
 
-
     <!-- Start Menu Shortcut -->
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="ApplicationShortcutStartMenu" Guid="52A84EC2-6809-4CD1-867F-ACA3C702AD50">
@@ -160,8 +107,6 @@
         <RegistryValue Root="HKCU" Key="Software\HuggingFace-TS" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
       </Component>
     </DirectoryRef>
-
   </Fragment>
-
 
 </Wix>
