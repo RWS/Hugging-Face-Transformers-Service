@@ -21,7 +21,6 @@ import logging
 import aiohttp
 import pandas as pd
 from datasets import Dataset
-from pathlib import Path
 
 
 logging.basicConfig(level=logging.INFO)
