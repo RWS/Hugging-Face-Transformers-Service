@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
-#from fastapi.responses import JSONResponse, StreamingResponse
 from huggingface_hub import hf_hub_url
 from models import FineTuneRequest, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
 from state import model_state
@@ -21,9 +20,8 @@ import logging
 import aiohttp
 import pandas as pd
 from datasets import Dataset
+import aiofiles
 
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -58,6 +56,7 @@ def get_download_path(request: DownloadDirectoryRequest):
     """
 
     download_dir = config.DOWNLOAD_DIRECTORY.replace('/', '\\')
+    logger.info('POST /download_directory/')
 
     if not os.path.exists(download_dir):
         raise HTTPException(status_code=500, detail=f"Base download directory does not exist: {download_dir}")
@@ -68,8 +67,10 @@ def get_download_path(request: DownloadDirectoryRequest):
         sanitized_model_name = model_name.replace('/', '--')
         model_path = os.path.join(download_dir, sanitized_model_name)
 
+        logger.info(f"Download Directory: '{model_path}'")
         return DownloadDirectoryResponse(path=model_path)
     else:
+        logger.info(f"Download Directory: '{download_dir}'")
         return DownloadDirectoryResponse(path=download_dir)
     
 
@@ -110,7 +111,8 @@ async def list_model_files_endpoint(
     Retrieves the list of available files in the specified Hugging Face model repository,
     including each file's size when available. Only files in the root directory are listed.
     """
-    
+    logger.info('POST /list_model_files/')
+
     model_name = request.model_name
     api_key = request.api_key or os.getenv("HUGGINGFACE_TOKEN")
     
@@ -225,6 +227,8 @@ async def list_model_files_endpoint(
 async def list_models() -> List[ModelInfo]:
     """List all downloaded models along with their types, sizes, properties, and mounted files."""
    
+    logger.info('GET /list_models/')
+
     models_info = []
     try:    
         model_dirs = [
@@ -314,6 +318,8 @@ async def download_model_endpoint(
     api_key = request.api_key if request.api_key else config.HUGGINGFACE_TOKEN 
     files_to_download = request.files_to_download
    
+    logger.info('POST /download_model/')
+
     logger.info(
         f"Received download request from client_id: {client_id} "
         f"for model: {model_name} with files: {files_to_download}"
@@ -542,10 +548,19 @@ async def download_file(
     filename: str,
     token: Optional[str] = None,
     chunk_size: int = 5 * 1024 * 1024  # 5MB
+    #chunk_size: int = 8 * 1024  # 8KB
 ):
     """
     Download a file from the given URL to the destination path,
     sending progress updates via WebSockets to the client.
+
+    Args:
+        download_url (str): The URL to download the file from.
+        destination_path (str): The local path to save the downloaded file.
+        client_id (str): The identifier for the WebSocket client.
+        filename (str): The name of the file being downloaded.
+        token (Optional[str]): Authorization token, if required.
+        chunk_size (int): The size of each chunk to read from the response.
     """
     headers = {}
     if token:
@@ -555,47 +570,60 @@ async def download_file(
             async with session.get(download_url) as response:
                 response.raise_for_status()
                 total_size = response.headers.get('Content-Length')
-                if total_size:
+                if total_size is not None:
                     total_size = int(total_size)
                 downloaded = 0
+
                 # Ensure the destination directory exists
                 os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-                with open(destination_path, 'wb') as f:
+
+                async with aiofiles.open(destination_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         if chunk:
-                            f.write(chunk)
+                            await f.write(chunk)
                             downloaded += len(chunk)
+
                             if total_size:
                                 progress = (downloaded / total_size) * 100
+                                progress_data = {
+                                    "type": "file_progress",
+                                    "data": {
+                                        "file_name": filename,
+                                        "progress": f"{progress:.2f}%",
+                                        "downloaded": downloaded,
+                                        "total": total_size
+                                    }
+                                }
                                 try:
-                                    await manager.send_message(
-                                        client_id,
-                                        json.dumps({
-                                            "type": "file_progress",
-                                            "data": {
-                                                "file_name": filename,
-                                                "progress": f"{progress:.2f}%",
-                                                "downloaded": downloaded,
-                                                "total": total_size
-                                            }
-                                        })
-                                    )
+                                    await manager.send_message(client_id, json.dumps(progress_data))
                                 except Exception as e:
                                     logger.warning(f"Failed to send progress update: {e}")
-                                    
+        # After successful download, notify the client
+        completion_message = {
+            "type": "completed",
+            "data": f"Download of {filename} completed successfully."
+        }
+        await manager.send_message(client_id, json.dumps(completion_message))
+        logger.info(f"Download of {filename} completed successfully for client {client_id}.")
     except Exception as e:
         error_message = f"Failed to download {filename}: {str(e)}"
         logger.error(error_message)
+        error_data = {
+            "type": "error",
+            "data": error_message
+        }
         try:
-            await manager.send_message(
-                client_id,
-                json.dumps({
-                    "type": "error",
-                    "data": error_message
-                })
-            )
+            await manager.send_message(client_id, json.dumps(error_data))
         except Exception as send_err:
             logger.warning(f"Failed to send error message: {send_err}")
+        
+        # Clean up partial downloads
+        if os.path.exists(destination_path):
+            try:
+                os.remove(destination_path)
+                logger.info(f"Removed incomplete file: {destination_path}")
+            except Exception as remove_err:
+                logger.warning(f"Failed to remove incomplete file: {remove_err}")
         raise
 
 @router.websocket("/ws/progress/{client_id}")
@@ -673,6 +701,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 async def mount_model(request: MountModelRequest) -> dict:   
     """Mount the specified model."""
     
+    logger.info('POST /mount_model/')
+
     model_name = request.model_name
     requested_model_type = request.model_type
     properties = request.properties or {}
@@ -789,8 +819,9 @@ async def mount_model(request: MountModelRequest) -> dict:
 async def unmount_model(request: ModelRequest) -> dict:
     """Unmounts the model."""
     
-    model_name = request.model_name
-    
+    logger.info('POST /unmount_model/')
+
+    model_name = request.model_name    
     model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
     
     if model_to_unmount is None:
@@ -814,6 +845,8 @@ async def unmount_model(request: ModelRequest) -> dict:
 async def delete_model(request: ModelRequest) -> dict:
     """Delete a previously mounted model."""
     
+    logger.info('DELETE /delete_model/')
+
     model_name = request.model_name
     
     # Find the model in the global models list
@@ -850,6 +883,8 @@ async def delete_model(request: ModelRequest) -> dict:
 async def translate(translation_request: TranslationRequest) -> GeneratedResponse:
     """Translate input text using the specified translation model."""
     
+    logger.info('POST /translate/')
+
     model_to_use = next((model for model in model_state.models if model.model_name == translation_request.model_name), None)
     if not model_to_use or not model_to_use.pipeline:
         raise HTTPException(status_code=400, detail="The specified translation model is not currently mounted.")
@@ -876,7 +911,9 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
 )
 async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
-       
+    
+    logger.info('POST /generate/')
+
     model_to_use = next(
         (model for model in model_state.models if model.model_name == text_generation_request.model_name), 
         None
@@ -966,6 +1003,9 @@ async def get_model_info(
     Returns:
     - Model configuration or model information.
     """
+
+    logger.info('GET /model_info/')
+
     if return_type not in ["config", "info"]:
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
 
@@ -1062,6 +1102,8 @@ async def fine_tune(
     Initiates the fine-tuning of a pretrained translation model based on the provided parameters.
     The fine-tuning process runs in the background and sends progress updates via WebSocket.
     """
+    logger.info('POST /fine-tune/')
+
     # Validate that the client_id is connected
     if request.client_id not in manager.active_connections:
         raise HTTPException(status_code=400, detail=f"Client ID '{request.client_id}' is not connected via WebSocket.")
