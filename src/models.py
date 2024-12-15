@@ -241,7 +241,7 @@ class FineTuneRequest(BaseModel):
     per_device_eval_batch_size: Optional[int] = Field(2, description="Batch size per device during evaluation.")
     learning_rate: Optional[float] = Field(3e-5, description="Learning rate for the optimizer.")
     weight_decay: Optional[float] = Field(0.01, description="Weight decay for the optimizer.")
-    max_length: Optional[int] = Field(128, description="Maximum sequence length for tokenization.")
+    max_length: Optional[int] = Field(512, description="Maximum sequence length for tokenization.")
     save_steps: Optional[int] = Field(50, description="Number of steps between each model save.")
     save_total_limit: Optional[int] = Field(3, description="Maximum number of checkpoints to save.")  
     validation_file: Optional[str] = Field(None, description="Path to the CSV validation data file (optional).")  

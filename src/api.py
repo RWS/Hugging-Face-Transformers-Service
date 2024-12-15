@@ -344,6 +344,7 @@ async def download_model_endpoint(
     # Initialize the model state for this client
     model_states[client_id] = {
         "is_downloading": True,
+        "cancel_requested": False,
         "download_progress": {
             "status": "Starting...",
             "message": "",
@@ -445,6 +446,21 @@ async def download_model(
         downloaded_total = 0
         
         for index, filename in enumerate(filtered_files):
+            
+            # check if cancel requested
+            if model_state.get("cancel_requested"):
+                logger.info(f"Client {client_id}: Cancellation requested. Stopping download.")
+                model_state["download_progress"]["status"] = "Cancelled"
+                model_state["download_progress"]["message"] = "Download was cancelled by the user."
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "cancelled",
+                        "data": "Download was cancelled."
+                    })
+                )               
+                return 
+                       
             try:
                 start_message = {
                     "file_name": filename,
@@ -488,7 +504,7 @@ async def download_model(
                     "file_name": filename,
                     "index": index + 1,
                     "total_files": total_files,
-                    "status": "completed"
+                    "status": "file_completed"
                 }
                 model_state["download_progress"]["files"].append(progress_update)
                 model_state["download_progress"]["message"] = (
@@ -519,6 +535,28 @@ async def download_model(
                             }
                         })
                     )
+                
+                # check if cancel requested
+                if model_state.get("cancel_requested"):
+                    logger.info(f"Client {client_id}: Cancellation requested during file download.")
+                    model_state["download_progress"]["status"] = "Cancelled"
+                    model_state["download_progress"]["message"] = "Download was cancelled by the user."
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "type": "cancelled",
+                            "data": "Download was cancelled."
+                        })
+                    )
+                    # Clean up partial downloads if necessary
+                    if os.path.exists(destination_path):
+                        try:
+                            os.remove(destination_path)
+                            logger.info(f"Removed incomplete file: {destination_path}")
+                        except Exception as remove_err:
+                            logger.warning(f"Failed to remove incomplete file: {remove_err}")
+                    return
+                                
             except Exception as e:
                 error_message = f"Error downloading {filename}: {str(e)}"
                 model_state["download_progress"]["error"] = error_message
@@ -590,6 +628,28 @@ async def download_file(
                 async with aiofiles.open(destination_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         if chunk:
+                            
+                            # Check if cancel was requested
+                            if model_states.get(client_id, {}).get("cancel_requested"):
+                                logger.info(f"Client {client_id}: Cancellation requested. Aborting file download.")
+                                await manager.send_message(
+                                    client_id,
+                                    json.dumps({
+                                        "type": "cancelled",
+                                        "data": f"Download of {filename} was cancelled."
+                                    })
+                                )
+                                # Clean up partial download
+                                await f.close()
+                                if os.path.exists(destination_path):
+                                    try:
+                                        os.remove(destination_path)
+                                        logger.info(f"Removed incomplete file: {destination_path}")
+                                    except Exception as remove_err:
+                                        logger.warning(f"Failed to remove incomplete file: {remove_err}")
+                                return  # Exit the download_file function
+
+
                             await f.write(chunk)
                             downloaded += len(chunk)
 
@@ -610,7 +670,7 @@ async def download_file(
                                     logger.warning(f"Failed to send progress update: {e}")
         # After successful download, notify the client
         completion_message = {
-            "type": "completed",
+            "type": "file_completed",
             "data": f"Download of {filename} completed successfully."
         }
         await manager.send_message(client_id, json.dumps(completion_message))
@@ -649,6 +709,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     logger.info(f"Heartbeat received from {client_id}")
                     # Send acknowledgment
                     await manager.send_message(client_id, json.dumps({"type": "heartbeat_ack"}))
+                elif data == "cancel":
+                    logger.info(f"Cancellation request received from {client_id}")                    
+                    if client_id in model_states:
+                        model_states[client_id]["cancel_requested"] = True
+                        await manager.send_message(
+                            client_id,
+                            json.dumps({
+                                "type": "cancellation_ack",
+                                "data": "Cancellation requested. Stopping download..."
+                            })
+                        )              
                 else:
                     logger.info(f"Received message from {client_id}: {data}")
             except WebSocketDisconnect:
