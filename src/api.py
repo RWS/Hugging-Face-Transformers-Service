@@ -3,9 +3,9 @@ from huggingface_hub import hf_hub_url
 from models import FineTuneRequest, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TextGenerationRequest, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
-from helpers import run_map, get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
+from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
@@ -48,29 +48,26 @@ async def shutdown_event():
 
 
 @router.post("/download_directory", response_model=DownloadDirectoryResponse)
-def get_download_path(request: DownloadDirectoryRequest):
+def get_download_path(request: DownloadDirectoryRequest) -> DownloadDirectoryResponse:
     """
     Retrieve the current download directory.
-
     If `model_name` is provided and not empty, include it in the path.
     """
-
     download_dir = config.DOWNLOAD_DIRECTORY.replace('/', '\\')
-    logger.info('POST /download_directory/')
-
+    logger.info('POST /download_directory/ - Retrieving download directory path.')
+    
     if not os.path.exists(download_dir):
+        logger.error(f"Base download directory does not exist: {download_dir}")
         raise HTTPException(status_code=500, detail=f"Base download directory does not exist: {download_dir}")
-
+    
     model_name = request.model_name
-
-    if model_name and model_name.strip():    
+    if model_name and model_name.strip():
         sanitized_model_name = model_name.replace('/', '--')
         model_path = os.path.join(download_dir, sanitized_model_name)
-
-        logger.info(f"Download Directory: '{model_path}'")
+        logger.info(f"Download Directory with model_name '{model_name}': '{model_path}'")
         return DownloadDirectoryResponse(path=model_path)
     else:
-        logger.info(f"Download Directory: '{download_dir}'")
+        logger.info(f"Download Directory without specific model: '{download_dir}'")
         return DownloadDirectoryResponse(path=download_dir)
     
 
@@ -111,59 +108,61 @@ async def list_model_files_endpoint(
     Retrieves the list of available files in the specified Hugging Face model repository,
     including each file's size when available. Only files in the root directory are listed.
     """
-    logger.info('POST /list_model_files/')
-
+    logger.info('POST /list_model_files/ - Listing model files.')
     model_name = request.model_name
     api_key = request.api_key or os.getenv("HUGGINGFACE_TOKEN")
     
     if not model_name:
+        logger.warning("list_model_files_endpoint called without 'model_name'.")
         raise HTTPException(status_code=400, detail="`model_name` must be provided.")
     
-    logger.info(f"Received list files request for model: {model_name}")
+    logger.info(f"Received list files request for model: '{model_name}'")
     
     try:
         # Fetch model information using Hugging Face Hub API
+        logger.info(f"Fetching model info for '{model_name}' using Hugging Face API.")
         info = await asyncio.to_thread(fetch_model_info, model_name, api_key)
         
         if not hasattr(info, 'siblings'):
-            raise AttributeError("ModelInfo object has no attribute 'siblings'")
+            error_msg = "ModelInfo object has no attribute 'siblings'"
+            logger.error(f"{error_msg} for model '{model_name}'")
+            raise AttributeError(error_msg)
         
         files_info = []
-
-        # Extract the default branch for accurate download URLs
-        # default_branch = info.sha  # Alternatively, use info.default_branch if available
-        # if hasattr(info, 'default_branch') and info.default_branch:
-        #     default_branch = info.default_branch
+        logger.info(f"Processing sibling files for model '{model_name}'.")
         
         for file in info.siblings:
             filename = file.rfilename
             if not filename:
+                logger.info("Skipping file with no filename.")
                 continue
             
             # **Filter Out Non-Root Files**
             if '/' in filename or '\\' in filename:
-                logger.debug(f"Skipping non-root file: {filename}")
+                logger.info(f"Skipping non-root file: '{filename}'")
                 continue
-                        
+            
             download_url = hf_hub_url(
                 repo_id=model_name,
                 filename=filename
-                # revision=default_branch
+                # revision=default_branch  # Uncomment if you use revision
             )
-                       
+            
             if getattr(file, 'size', None) is not None:
                 formatted_size = format_size(file.size)
+                logger.info(f"File '{filename}' has size {formatted_size}.")
             else:
-                size_bytes = await get_file_size_via_head(download_url)
+                size_bytes = await get_file_size_via_head(download_url, api_key)
                 if size_bytes is not None:
                     formatted_size = format_size(size_bytes)
                 else:
-                    size_bytes = await get_file_size_via_get(download_url)
+                    size_bytes = await get_file_size_via_get(download_url, api_key)
                     if size_bytes is not None:
                         formatted_size = format_size(size_bytes)
                     else:
                         formatted_size = "Unknown"
-                                  
+                        logger.warning(f"Could not determine size for file '{filename}'.")
+            
             files_info.append(
                 ModelFileInfo(
                     file_name=filename,
@@ -172,9 +171,9 @@ async def list_model_files_endpoint(
                 )
             )
         
-        logger.info(f"Retrieved {len(files_info)} root files from model '{model_name}'")
+        logger.info(f"Retrieved {len(files_info)} root files from model '{model_name}'.")
         return ListModelFilesResponse(files=files_info)
-   
+    
     except AttributeError as ae:
         error_message = f"Error accessing model files: {str(ae)}"
         logger.error(f"AttributeError: {error_message}")
@@ -226,20 +225,22 @@ async def list_model_files_endpoint(
 )
 async def list_models() -> List[ModelInfo]:
     """List all downloaded models along with their types, sizes, properties, and mounted files."""
-   
-    logger.info('GET /list_models/')
-
+    
+    logger.info('GET /list_models/ - Listing all downloaded models.')
     models_info = []
-    try:    
+    try:
         model_dirs = [
             d for d in os.listdir(config.DOWNLOAD_DIRECTORY)
             if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))
         ]
+        logger.info(f"Found {len(model_dirs)} directories in download path '{config.DOWNLOAD_DIRECTORY}'.")
+        
         for model_dir in model_dirs:
             # Skip any directories that start with '.' or are named '.locks'
             if model_dir.startswith('.') or model_dir == '.locks':
+                logger.info(f"Skipping directory '{model_dir}' based on naming convention.")
                 continue
-           
+            
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Normalize model name
             model_type = infer_model_type(model_dir, config.DOWNLOAD_DIRECTORY)
@@ -247,11 +248,13 @@ async def list_models() -> List[ModelInfo]:
             formatted_size = format_size(model_size)
             is_mounted = any(
                 model.model_name == model_name for model in model_state.models
-            ) 
-           
+            )
+            
+            logger.info(f"Processing model '{model_name}': Type='{model_type}', Size='{formatted_size}', Mounted={is_mounted}")
+            
             # Retrieve properties from the mounted models
             properties = {}
-            loaded_file_name = None 
+            loaded_file_name = None
             if is_mounted:
                 local_model = next(
                     (model for model in model_state.models if model.model_name == model_name), None
@@ -259,13 +262,18 @@ async def list_models() -> List[ModelInfo]:
                 if local_model:
                     properties = local_model.properties
                     loaded_file_name = local_model.file_name  # the loaded gguf file name
-           
+                    logger.info(f"Model '{model_name}' is mounted with properties: {properties} and loaded_file_name: {loaded_file_name}")
+            
             file_names = None
             if model_type == 'text-generation':
                 gguf_files_full = glob.glob(os.path.join(model_path, "*.[gG][gG][uU][fF]"))
                 gguf_files = [os.path.basename(f) for f in gguf_files_full]
                 file_names = gguf_files if gguf_files else None
-
+                if file_names:
+                    logger.info(f"Found gguf files for model '{model_name}': {file_names}")
+                else:
+                    logger.info(f"No gguf files found for model '{model_name}'.")
+            
             models_info.append(ModelInfo(
                 model_name=model_name,
                 model_type=model_type,
@@ -276,8 +284,10 @@ async def list_models() -> List[ModelInfo]:
                 loaded_file_name=loaded_file_name  # Include the loaded gguf file name
             ))
     except Exception as e:
+        logger.error(f"Error accessing model cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
-   
+    
+    logger.info(f"Successfully listed {len(models_info)} models.")
     return models_info
 
 
@@ -698,35 +708,43 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         }
     }
 )
-async def mount_model(request: MountModelRequest) -> dict:   
+async def mount_model(request: MountModelRequest) -> dict:
     """Mount the specified model."""
     
-    logger.info('POST /mount_model/')
-
+    logger.info("POST /mount_model/ - Mount model request received.")
     model_name = request.model_name
     requested_model_type = request.model_type
     properties = request.properties or {}
-    specified_file_name = request.file_name 
+    specified_file_name = request.file_name
+
+    logger.info(
+        f"Mount Model Parameters - Model Name: {model_name}, Type: {requested_model_type}, "
+        f"Properties: {properties}, Specified File Name: {specified_file_name}"
+    )
 
     # Check if the model is already mounted
     if any(model.model_name == model_name for model in model_state.models):
+        logger.warning(f"Model '{model_name}' of type '{requested_model_type}' is already mounted.")
         return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
-
-    # Construct the model path based on the model name
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))    
     
-    if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail="Model path does not exist.")
+    # Construct the model path based on the model name
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
+    logger.info(f"Resolved model path: {model_path}")
 
+    if not os.path.exists(model_path):
+        logger.error(f"Model path '{model_path}' does not exist.")
+        raise HTTPException(status_code=404, detail="Model path does not exist.")
+    
     tokenizer = None
     model = None
-    trans_pipeline = None    
+    trans_pipeline = None
 
     try:
         if requested_model_type == 'translation':
+            logger.info(f"Loading translation model '{model_name}' from '{model_path}'.")
             model = get_model_type(requested_model_type).from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
-           
+
             # Prepare pipeline keyword arguments
             pipeline_kwargs = {
                 "model": model,
@@ -735,61 +753,82 @@ async def mount_model(request: MountModelRequest) -> dict:
             for key, value in properties.items():
                 if value is not None:
                     pipeline_kwargs[key] = value
-           
+                    logger.info(f"Added pipeline property - {key}: {value}")
+
             trans_pipeline = pipeline(
                 requested_model_type,
                 **pipeline_kwargs
             )
+            logger.info(f"Translation pipeline for model '{model_name}' has been set up successfully.")
 
-        elif requested_model_type == "text-generation":        
+        elif requested_model_type == "text-generation":
+            logger.info(f"Preparing to load text-generation model '{model_name}'.")
             if specified_file_name:
                 # Verify that the specified *.gguf file exists and has a .gguf extension
                 gguf_file_path = os.path.join(model_path, specified_file_name)
+                logger.info(f"Specified gguf file path: {gguf_file_path}")
+
                 if not os.path.exists(gguf_file_path):
+                    logger.error(f"The specified *.gguf file '{specified_file_name}' does not exist in the model directory.")
                     raise HTTPException(
-                        status_code=404, 
+                        status_code=404,
                         detail=f"The specified *.gguf file '{specified_file_name}' does not exist in the model directory."
                     )
                 if not specified_file_name.lower().endswith(".gguf"):
+                    logger.error(f"The specified file '{specified_file_name}' does not have a '.gguf' extension.")
                     raise HTTPException(
                         status_code=400,
                         detail=f"The specified file '{specified_file_name}' does not have a '.gguf' extension."
                     )
                 
                 # Load the text-generation model using llama_cpp
+                logger.info(f"Loading text-generation model '{model_name}' with gguf file '{specified_file_name}'.")
                 model = Llama.from_pretrained(
                     repo_id=model_name,
                     filename=specified_file_name,
                     local_dir=model_path,
                     verbose=False
                 )
-                                
+                logger.info(f"Text-generation model '{model_name}' loaded successfully with gguf file.")
+
                 trans_pipeline = None
                 tokenizer = None
             else:
-                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)  
+                logger.info(f"Loading text-generation model '{model_name}' without specifying a gguf file.")
+                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
                 if tokenizer.pad_token is None:
                     tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
-                    print("pad_token was not set. Assigned pad_token to eos_token.")
-
+                    logger.warning("pad_token was not set. Assigned pad_token to eos_token.")
+                
                 model = get_model_type(requested_model_type).from_pretrained(model_path, trust_remote_code=True)
                 
                 # Update model configuration with the pad_token_id
                 model.config.pad_token_id = tokenizer.pad_token_id
+                logger.info(f"Set model's pad_token_id to {tokenizer.pad_token_id}.")
                 model.resize_token_embeddings(len(tokenizer))
+                logger.info(f"Resized token embeddings to match tokenizer length: {len(tokenizer)}.")
 
                 trans_pipeline = pipeline(
                     requested_model_type,
                     model=model,
-                    torch_dtype="auto",                
-                    device_map="auto",                
-                    tokenizer=tokenizer)
+                    torch_dtype="auto",
+                    device_map="auto",
+                    tokenizer=tokenizer
+                )
+                logger.info(f"Text-generation pipeline for model '{model_name}' has been set up successfully.")
         else:
+            logger.error(f"Unsupported model type provided: '{requested_model_type}'.")
             raise HTTPException(status_code=400, detail="Unsupported model type provided.")
-
+    
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions to be handled by FastAPI
+        logger.error(f"HTTPException during model mounting: {http_exc.detail}")
+        raise http_exc
     except Exception as ex:
+        logger.error(f"Error loading model '{model_name}': {str(ex)}")
         raise HTTPException(status_code=500, detail=f"Error loading model: {str(ex)}")
-
+    
+    # Create and store the local model instance
     local_model = LocalModel(
         model_name=model_name,
         model=model,
@@ -799,14 +838,15 @@ async def mount_model(request: MountModelRequest) -> dict:
         properties=properties,
         file_name=specified_file_name if specified_file_name else None
     )
-
     model_state.models.append(local_model)
-
+    logger.info(f"Model '{model_name}' of type '{requested_model_type}' mounted successfully.")
+    
     response = {
         "message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."
     }
     if properties:
         response["properties"] = properties
+        logger.info(f"Mount model response properties: {properties}")
     
     return response
 
@@ -819,22 +859,30 @@ async def mount_model(request: MountModelRequest) -> dict:
 async def unmount_model(request: ModelRequest) -> dict:
     """Unmounts the model."""
     
-    logger.info('POST /unmount_model/')
+    logger.info("POST /unmount_model/ - Unmount model request received.")
+    model_name = request.model_name
+    logger.info(f"Model to unmount: {model_name}")
 
-    model_name = request.model_name    
     model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
     
     if model_to_unmount is None:
+        logger.warning(f"Attempted to unmount non-existent model '{model_name}'.")
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not currently mounted.")
-
-   # Free resources if necessary (e.g., if using GPU)
-    if torch.cuda.is_available() and model_to_unmount.model.device.type == 'cuda':
-        model_to_unmount.model.cpu()  # Move model to CPU to free GPU memory
-        print(f"Model '{model_name}' moved to CPU.")
-
-    # Remove the model from the global models list
-    model_state.models.remove(model_to_unmount)
-
+    
+    try:
+        # Free resources if necessary (e.g., if using GPU)
+        if torch.cuda.is_available() and hasattr(model_to_unmount.model, 'device') and model_to_unmount.model.device.type == 'cuda':
+            model_to_unmount.model.cpu()  # Move model to CPU to free GPU memory
+            logger.info(f"Model '{model_name}' moved to CPU to free GPU memory.")
+        
+        # Remove the model from the global models list
+        model_state.models.remove(model_to_unmount)
+        logger.info(f"Model '{model_name}' has been unmounted and removed from the global models list.")
+    
+    except Exception as e:
+        logger.error(f"Error unmounting model '{model_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error unmounting model: {str(e)}")
+    
     return {"message": f"Model '{model_name}' unmounted successfully."}
 
 @router.delete("/delete_model/",
@@ -845,35 +893,46 @@ async def unmount_model(request: ModelRequest) -> dict:
 async def delete_model(request: ModelRequest) -> dict:
     """Delete a previously mounted model."""
     
-    logger.info('DELETE /delete_model/')
-
+    logger.info("DELETE /delete_model/ - Initiated deletion process.")
     model_name = request.model_name
-    
+
     # Find the model in the global models list
     model_to_delete = next((model for model in model_state.models if model.model_name == model_name), None)
-    
-    if model_to_delete:        
+
+    if model_to_delete:
+        logger.info(f"Model '{model_name}' found. Proceeding with deletion.")
         # Free resources if it was on GPU
         if torch.cuda.is_available() and model_to_delete.model.device.type == 'cuda':
             model_to_delete.model.cpu()  # Move model to CPU to free GPU memory
-            print(f"Model '{model_name}' moved to CPU.")
-
+            logger.info(f"Model '{model_name}' moved to CPU to free GPU memory.")
         # Remove the model from the global models list
         model_state.models.remove(model_to_delete)
+        logger.info(f"Model '{model_name}' removed from the global models list.")
+    else:
+        logger.warning(f"Model '{model_name}' not found in the global models list.")
 
-    
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--')) 
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
+    logger.info(f"Resolved model path: {model_path}")
 
     # Check if the model path exists
     if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail=f"Model '{model_name}' does not exist at path '{model_path}'.")
+        logger.error(f"Model path '{model_path}' does not exist for model '{model_name}'.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{model_name}' does not exist at path '{model_path}'."
+        )
 
     # Remove the model directory and its contents
     try:
         shutil.rmtree(model_path)
+        logger.info(f"Model directory '{model_path}' and its contents have been deleted successfully.")
         return {"message": f"Model '{model_name}' has been deleted successfully."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while deleting the model: {str(e)}")
+        logger.error(f"An error occurred while deleting the model '{model_name}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while deleting the model: {str(e)}"
+        )
     
 
 @router.post("/translate/",
@@ -883,24 +942,40 @@ async def delete_model(request: ModelRequest) -> dict:
 async def translate(translation_request: TranslationRequest) -> GeneratedResponse:
     """Translate input text using the specified translation model."""
     
-    logger.info('POST /translate/')
-
-    model_to_use = next((model for model in model_state.models if model.model_name == translation_request.model_name), None)
+    logger.info("POST /translate/ - Translation request received.")
+    model_to_use = next(
+        (model for model in model_state.models if model.model_name == translation_request.model_name), None
+    )
+    
     if not model_to_use or not model_to_use.pipeline:
-        raise HTTPException(status_code=400, detail="The specified translation model is not currently mounted.")
-
+        logger.warning(f"Translation model '{translation_request.model_name}' is not mounted or pipeline is unavailable.")
+        raise HTTPException(
+            status_code=400,
+            detail="The specified translation model is not currently mounted."
+        )
+    
     input_text = translation_request.text
+    logger.info(f"Input text for translation: {input_text}")
+
     try:
         translated_text = model_to_use.pipeline(input_text)
-        
-        print("Translation result:", translated_text)
+        logger.info(f"Translation result for model '{translation_request.model_name}': {translated_text}")
 
         if isinstance(translated_text, list):
-            translated_text = translated_text[0]['translation_text']
-    
+            if translated_text:
+                translated_text = translated_text[0].get('translation_text', '')
+                logger.info(f"Extracted translated text: {translated_text}")
+            else:
+                logger.warning("Translation pipeline returned an empty list.")
+                translated_text = ""
+
         return GeneratedResponse(generated_response=translated_text)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during translation: {str(e)}")
+        logger.error(f"Error during translation with model '{translation_request.model_name}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error during translation: {str(e)}"
+        )
 
 
 @router.post(
@@ -912,15 +987,19 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
 async def generate(text_generation_request: TextGenerationRequest) -> GeneratedResponse:
     """Generate text using the specified text generation model."""
     
-    logger.info('POST /generate/')
-
+    logger.info("POST /generate/ - Text generation request received.")
     model_to_use = next(
-        (model for model in model_state.models if model.model_name == text_generation_request.model_name), 
+        (
+            model for model in model_state.models
+            if model.model_name == text_generation_request.model_name
+        ),
         None
     )
+    
     if not model_to_use:
+        logger.warning(f"Text generation model '{text_generation_request.model_name}' is not mounted.")
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="The specified text generation model is not currently mounted."
         )
     
@@ -928,6 +1007,12 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
     messages = text_generation_request.prompt
     prompt_plain = text_generation_request.prompt_plain
     temperature = text_generation_request.temperature
+
+    logger.info(
+        f"Generation parameters - Model: {text_generation_request.model_name}, "
+        f"Max Tokens: {max_tokens}, Temperature: {temperature}, "
+        f"Prompt Plain: {prompt_plain}, Messages: {messages}"
+    )
     
     try:
         # Determine if the model uses a .gguf file based on the file_name extension
@@ -935,6 +1020,8 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
             model_to_use.file_name is not None and
             model_to_use.file_name.lower().endswith(".gguf")
         )
+        logger.info(f"Is LLaMA model (.gguf): {is_llama_model}")
+
         if is_llama_model:
             # Use llama_cpp's method to generate text
             generated_results = model_to_use.model.create_chat_completion(
@@ -942,45 +1029,65 @@ async def generate(text_generation_request: TextGenerationRequest) -> GeneratedR
                 max_tokens=max_tokens,
                 temperature=temperature
             )
+            logger.info(f"Generated results using LLaMA model '{text_generation_request.model_name}': {generated_results}")
         else:
-            if max_tokens <= 0:             
+            if max_tokens <= 0:
                 max_tokens = model_to_use.model.config.max_position_embeddings
+                logger.info(
+                    f"Max tokens <= 0. Set to model's max_position_embeddings: {max_tokens}"
+                )
             
-            if prompt_plain:                
+            if prompt_plain:
                 generated_results = model_to_use.pipeline(
                     prompt_plain,
                     max_length=max_tokens,
                     temperature=temperature
                 )
+                logger.info(f"Generated results with plain prompt: {generated_results}")
             else:
                 generated_results = model_to_use.pipeline(
                     messages,
                     max_length=max_tokens,
                     temperature=temperature
                 )
-                
-        print("Generated results:", generated_results)
+                logger.info(f"Generated results with messages: {generated_results}")
+        
+        # Log the generated results
+        logger.info(f"Generated results: {generated_results}")
     except Exception as e:
+        logger.error(f"Error generating text with model '{text_generation_request.model_name}': {str(e)}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Error generating text: {str(e)}"
         )
     
     result_type = text_generation_request.result_type or 'assistant'  # Default to 'assistant' if None or empty
-    
-    if result_type == 'raw':
-        if isinstance(generated_results, list):
-            return GeneratedResponse(generated_response=generated_results)
+    logger.info(f"Result type requested: {result_type}")
+
+    try:
+        if result_type == 'raw':
+            if isinstance(generated_results, list):
+                logger.info("Returning raw generated results as list.")
+                return GeneratedResponse(generated_response=generated_results)
+            else:
+                logger.info("Wrapping single generated result into a list.")
+                return GeneratedResponse(generated_response=[generated_results])
+        elif result_type == 'assistant':
+            assistant_response = extract_assistant_response(generated_results)
+            logger.info(f"Assistant response extracted: {assistant_response}")
+            return GeneratedResponse(generated_response=assistant_response)
         else:
-            return GeneratedResponse(generated_response=[generated_results])
-    elif result_type == 'assistant':
-        assistant_response = extract_assistant_response(generated_results)
-        return GeneratedResponse(generated_response=assistant_response)    
-    else:
+            logger.warning(f"Invalid result_type specified: {result_type}")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid result_type specified. Use 'raw' or 'assistant'."
+            )
+    except Exception as e:
+        logger.error(f"Error processing generated results: {str(e)}")
         raise HTTPException(
-            status_code=400, 
-            detail="Invalid result_type specified. Use 'raw' or 'assistant'."
-        )        
+            status_code=500,
+            detail=f"Error processing generated results: {str(e)}"
+        )     
 
 
 @router.get(
@@ -1092,6 +1199,46 @@ async def get_model_info(
     
 
 
+class WebSocketProgressCallback(TrainerCallback):
+    def __init__(self, client_id: str, queue: asyncio.Queue):
+        self.client_id = client_id
+        self.queue = queue
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.queue.put_nowait("Training started.")
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        self.queue.put_nowait(f"Epoch {state.epoch} started.")
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        self.queue.put_nowait(f"Epoch {state.epoch} ended.")
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        if state.global_step % 10 == 0:
+            self.queue.put_nowait(f"Step {state.global_step} started.")
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.global_step % 10 == 0:
+            self.queue.put_nowait(f"Step {state.global_step} completed.")
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs:
+            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k, v in logs.items()])
+            self.queue.put_nowait(message)
+
+
+async def progress_sender(client_id: str, queue: asyncio.Queue):
+    while True:
+        message = await queue.get()
+        if message == "TRAINING_DONE":
+            break
+        await send_progress(client_id, message)
+        queue.task_done()
+
+async def send_progress(client_id: str, message: str):
+    json_message = json.dumps({"type": "progress", "message": message})
+    await manager.send_message(client_id, json_message)
+
 @router.post("/fine-tune/", summary="Fine-Tune a Pretrained Translation Model",
              description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
 async def fine_tune(
@@ -1106,328 +1253,352 @@ async def fine_tune(
 
     # Validate that the client_id is connected
     if request.client_id not in manager.active_connections:
-        raise HTTPException(status_code=400, detail=f"Client ID '{request.client_id}' is not connected via WebSocket.")
-    
+        logger.warning(f"Client ID '{request.client_id}' is not connected via WebSocket.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Client ID '{request.client_id}' is not connected via WebSocket."
+        )
+
     # Add the fine_tune_model task to background
     background_tasks.add_task(fine_tune_model, request)
-    return {"message": "Fine-tuning has started. You will receive progress updates via WebSocket.", "status": "started"}
+    logger.info(f"Fine-tuning task added to background for client {request.client_id}")
+    return {
+        "message": "Fine-tuning has started. You will receive progress updates via WebSocket.",
+        "status": "started"
+    }
+async def fine_tune_model(request: FineTuneRequest):
+    client_id = request.client_id
+    queue = asyncio.Queue()
+    progress_task = asyncio.create_task(progress_sender(client_id, queue))
 
-async def send_progress(client_id: str, message: str):
-    json_message = json.dumps({"type": "progress", "message": message})
-    await manager.send_message(client_id, json_message)
+    try:
+        await send_progress(client_id, "Fine-tuning process started.")
+        logger.info("Starting fine-tuning process.")
 
-def fine_tune_model(request: FineTuneRequest):
-    async def run():
-        try:      
-            client_id = request.client_id
-            await send_progress(client_id, "Fine-tuning process started.")
-            logger.info("Starting fine-tuning process.")
+        # Validate paths
+        if not os.path.exists(request.model_path):
+            raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
+        logger.info(f"Model path '{request.model_path}' exists.")
+        await send_progress(client_id, f"Model path '{request.model_path}' exists.")
 
-            # Validate paths
-            if not os.path.exists(request.model_path):
-                raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
-            logger.info(f"Model path '{request.model_path}' exists.")
-            await send_progress(client_id, f"Model path '{request.model_path}' exists.")
+        if not os.path.exists(request.data_file):
+            raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
+        logger.info(f"Data file '{request.data_file}' exists.")
+        await send_progress(client_id, f"Data file '{request.data_file}' exists.")
 
-            if not os.path.exists(request.data_file):
-                raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
-            logger.info(f"Data file '{request.data_file}' exists.")
-            await send_progress(client_id, f"Data file '{request.data_file}' exists.")
+        # Optionally load validation data
+        validation_dataset = None
+        if request.validation_file:
+            if not os.path.exists(request.validation_file):
+                raise FileNotFoundError(
+                    f"Validation file '{request.validation_file}' does not exist."
+                )
+            logger.info(f"Validation file '{request.validation_file}' exists.")
+            await send_progress(
+                client_id, f"Validation file '{request.validation_file}' exists."
+            )
 
-            # Optionally load validation data
-            validation_dataset = None
-            if request.validation_file:
-                if not os.path.exists(request.validation_file):
-                    raise FileNotFoundError(f"Validation file '{request.validation_file}' does not exist.")
-                logger.info(f"Validation file '{request.validation_file}' exists.")
-                await send_progress(client_id, f"Validation file '{request.validation_file}' exists.")
-                
-                df_val = pd.read_csv(request.validation_file)
-                
-                if 'src_text' not in df_val.columns or 'tgt_text' not in df_val.columns:
-                    raise ValueError("Validation CSV data file must contain 'src_text' and 'tgt_text' columns.")
-                df_val['src_text'] = df_val['src_text'].astype(str).fillna('').str.strip()
-                df_val['tgt_text'] = df_val['tgt_text'].astype(str).fillna('').str.strip()
-                df_val = df_val[df_val['tgt_text'] != '']
-                
-                if len(df_val) == 0:
-                    raise ValueError("No valid examples found in the validation dataset after filtering.")
-                
-                validation_dataset = Dataset.from_pandas(df_val)
-                validation_dataset = validation_dataset.rename_column("src_text", "source")
-                validation_dataset = validation_dataset.rename_column("tgt_text", "target")
-                logger.info("Validation dataset loaded and prepared.")
-                await send_progress(client_id, "Validation dataset loaded and prepared.")
+            df_val = pd.read_csv(request.validation_file)
+            if 'src_text' not in df_val.columns or 'tgt_text' not in df_val.columns:
+                raise ValueError(
+                    "Validation CSV data file must contain 'src_text' and 'tgt_text' columns."
+                )
+            df_val['src_text'] = df_val['src_text'].astype(str).fillna('').str.strip()
+            df_val['tgt_text'] = df_val['tgt_text'].astype(str).fillna('').str.strip()
+            df_val = df_val[df_val['tgt_text'] != '']
+            if len(df_val) == 0:
+                raise ValueError(
+                    "No valid examples found in the validation dataset after filtering."
+                )
+            validation_dataset = Dataset.from_pandas(df_val)
+            validation_dataset = validation_dataset.rename_column("src_text", "source")
+            validation_dataset = validation_dataset.rename_column("tgt_text", "target")
+            logger.info("Validation dataset loaded and prepared.")
+            await send_progress(
+                client_id, "Validation dataset loaded and prepared."
+            )
 
-            # Load tokenizer and model
-            tokenizer = AutoTokenizer.from_pretrained(request.model_path)
-            model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
-            logger.info("Tokenizer and Model loaded successfully.")
-            await send_progress(client_id, "Tokenizer and Model loaded successfully.")
+        # Load tokenizer and model
+        tokenizer = AutoTokenizer.from_pretrained(request.model_path)
+        model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
+        logger.info("Tokenizer and Model loaded successfully.")
+        await send_progress(
+            client_id, "Tokenizer and Model loaded successfully."
+        )
 
-            # Detect if the model is multilingual by checking lang_code_to_id
-            is_multilingual = False
-            if hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
-                is_multilingual = True
-                logger.info("Model is detected as multilingual based on tokenizer.")
-                await send_progress(client_id, "Model is detected as multilingual based on tokenizer.")
+        # Detect if the model is multilingual by checking lang_code_to_id
+        is_multilingual = False
+        if hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
+            is_multilingual = True
+            logger.info("Model is detected as multilingual based on tokenizer.")
+            await send_progress(
+                client_id, "Model is detected as multilingual based on tokenizer."
+            )
 
+        if is_multilingual:
+            if not request.source_lang or not request.target_lang:
+                raise ValueError(
+                    "Source and target language codes must be provided for multilingual models."
+                )
+            if request.source_lang not in tokenizer.lang_code_to_id:
+                raise ValueError(
+                    f"Unsupported source language code: '{request.source_lang}'"
+                )
+            if request.target_lang not in tokenizer.lang_code_to_id:
+                raise ValueError(
+                    f"Unsupported target language code: '{request.target_lang}'"
+                )
+            logger.info(
+                f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported."
+            )
+            await send_progress(
+                client_id,
+                f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.",
+            )
+        else:
+            logger.info(
+                "Model is detected as non-multilingual. Language codes will be ignored."
+            )
+            await send_progress(
+                client_id,
+                "Model is detected as non-multilingual. Language codes will be ignored.",
+            )
+
+        # Create output directory if it doesn't exist
+        os.makedirs(request.output_dir, exist_ok=True)
+        logger.info(f"Output directory '{request.output_dir}' is ready.")
+        await send_progress(
+            client_id, f"Output directory '{request.output_dir}' is ready."
+        )
+
+        # Load and prepare the training dataset
+        df = pd.read_csv(request.data_file)
+        logger.info("Training data file loaded into DataFrame.")
+        await send_progress(
+            client_id, "Training data file loaded into DataFrame."
+        )
+        if 'src_text' not in df.columns or 'tgt_text' not in df.columns:
+            raise ValueError(
+                "CSV data file must contain 'src_text' and 'tgt_text' columns."
+            )
+        logger.info("Training CSV data file contains required columns.")
+        await send_progress(
+            client_id, "Training CSV data file contains required columns."
+        )
+        df['src_text'] = df['src_text'].astype(str).fillna('').str.strip()
+        df['tgt_text'] = df['tgt_text'].astype(str).fillna('').str.strip()
+        logger.info(
+            "Converted 'src_text' and 'tgt_text' to strings and handled missing values."
+        )
+        await send_progress(
+            client_id,
+            "Converted 'src_text' and 'tgt_text' to strings and handled missing values.",
+        )
+        # Remove rows where 'tgt_text' is empty
+        initial_count = len(df)
+        df = df[df['tgt_text'] != '']
+        final_count = len(df)
+        logger.info(
+            f"Filtered dataset: {final_count} out of {initial_count} examples remain."
+        )
+        await send_progress(
+            client_id,
+            f"Filtered dataset: {final_count} out of {initial_count} examples remain.",
+        )
+        if final_count == 0:
+            raise ValueError(
+                "No valid examples found in the dataset after filtering out empty 'tgt_text'."
+            )
+        # Prepare the dataset
+        dataset = Dataset.from_pandas(df)
+        dataset = dataset.rename_column("src_text", "source")
+        dataset = dataset.rename_column("tgt_text", "target")
+        logger.info("Training dataset prepared and columns renamed.")
+        await send_progress(
+            client_id, "Training dataset prepared and columns renamed."
+        )
+
+        # Define the preprocessing function
+        def preprocess_function(examples):
+            inputs = examples["source"]
+            targets = examples["target"]
             if is_multilingual:
-                if not request.source_lang or not request.target_lang:
-                    raise ValueError("Source and target language codes must be provided for multilingual models.")
-                if request.source_lang not in tokenizer.lang_code_to_id:
-                    raise ValueError(f"Unsupported source language code: '{request.source_lang}'")
-                if request.target_lang not in tokenizer.lang_code_to_id:
-                    raise ValueError(f"Unsupported target language code: '{request.target_lang}'")
-                logger.info(f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
-                await send_progress(client_id, f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
-            else:
-                logger.info("Model is detected as non-multilingual. Language codes will be ignored.")
-                await send_progress(client_id, "Model is detected as non-multilingual. Language codes will be ignored.")
-
-            # Create output directory if it doesn't exist
-            os.makedirs(request.output_dir, exist_ok=True)
-            logger.info(f"Output directory '{request.output_dir}' is ready.")
-            await send_progress(client_id, f"Output directory '{request.output_dir}' is ready.")
-
-            # Load and prepare the training dataset
-            df = pd.read_csv(request.data_file)
-            logger.info("Training data file loaded into DataFrame.")
-            await send_progress(client_id, "Training data file loaded into DataFrame.")
-
-            if 'src_text' not in df.columns or 'tgt_text' not in df.columns:
-                raise ValueError("CSV data file must contain 'src_text' and 'tgt_text' columns.")
-            logger.info("Training CSV data file contains required columns.")
-            await send_progress(client_id, "Training CSV data file contains required columns.")
-
-            df['src_text'] = df['src_text'].astype(str).fillna('').str.strip()
-            df['tgt_text'] = df['tgt_text'].astype(str).fillna('').str.strip()
-            logger.info("Converted 'src_text' and 'tgt_text' to strings and handled missing values.")
-            await send_progress(client_id, "Converted 'src_text' and 'tgt_text' to strings and handled missing values.")
-
-            # Remove rows where 'tgt_text' is empty
-            initial_count = len(df)
-            df = df[df['tgt_text'] != '']
-            final_count = len(df)
-            logger.info(f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
-            await send_progress(client_id, f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
-            if final_count == 0:
-                raise ValueError("No valid examples found in the dataset after filtering out empty 'tgt_text'.")
-
-            # Prepare the dataset
-            dataset = Dataset.from_pandas(df)
-            dataset = dataset.rename_column("src_text", "source")
-            dataset = dataset.rename_column("tgt_text", "target")
-            logger.info("Training dataset prepared and columns renamed.")
-            await send_progress(client_id, "Training dataset prepared and columns renamed.")
-            
+                inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
+            targets = [
+                text if isinstance(text, str) and text.strip() else " "
+                for text in targets
+            ]
+            if len(inputs) > 0:
+                sample_input = inputs[0]
+                sample_target = targets[0]
+                queue.put_nowait(f"Preprocessed Input Sample: {sample_input}")
+                queue.put_nowait(f"Preprocessed Target Sample: {sample_target}")
             if is_multilingual:
-                async def preprocess_function(examples):
-                    inputs = examples["source"]
-                    targets = examples["target"]
+                tokenizer.src_lang = request.source_lang
+                tokenizer.tgt_lang = request.target_lang
+                queue.put_nowait(
+                    f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'."
+                )
+            try:
+                model_inputs = tokenizer(
+                    inputs,
+                    max_length=request.max_length,
+                    truncation=True,
+                    padding="max_length",
+                )
+                queue.put_nowait("Input texts tokenized.")
+            except Exception as e:
+                queue.put_nowait(f"Error tokenizing inputs: {e}")
+                raise e
+            with tokenizer.as_target_tokenizer():
+                labels = tokenizer(
+                    targets,
+                    max_length=request.max_length,
+                    truncation=True,
+                    padding="max_length",
+                )
+            queue.put_nowait("Target texts tokenized.")
+            model_inputs["labels"] = labels["input_ids"]
+            queue.put_nowait("Labels assigned to model inputs.")
+            return model_inputs
 
-                    # Prepend target language token to the inputs to specify translation direction
+        # Apply preprocessing to the training dataset
+        logger.info("Applying preprocessing to the training dataset.")
+        await send_progress(
+            client_id, "Applying preprocessing to the training dataset."
+        )
+        tokenized_dataset = dataset.map(
+            preprocess_function,
+            batched=True,
+            remove_columns=["source", "target"],
+            desc="Tokenizing the dataset",
+            num_proc=4,
+        )
+        tokenized_dataset.set_format("torch")
+        logger.info("Training dataset tokenization complete.")
+        await send_progress(
+            client_id, "Training dataset tokenization complete."
+        )
+
+        # Optionally prepare validation dataset
+        tokenized_validation = None
+        if validation_dataset:
+            def preprocess_validation(examples):
+                inputs = examples["source"]
+                targets = examples["target"]
+                if is_multilingual:
                     inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
-                    
-                    # Ensure all targets are non-empty strings
-                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
-
-                    # Send a sample for debugging
-                    if len(inputs) > 0:
-                        sample_input = inputs[0]
-                        sample_target = targets[0]
-                        await send_progress(client_id, f"Preprocessed Input Sample: {sample_input}")
-                        await send_progress(client_id, f"Preprocessed Target Sample: {sample_target}")
-
-                    # Set source and target languages
+                targets = [
+                    text if isinstance(text, str) and text.strip() else " "
+                    for text in targets
+                ]
+                if is_multilingual:
                     tokenizer.src_lang = request.source_lang
                     tokenizer.tgt_lang = request.target_lang
-                    await send_progress(client_id, f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
+                    queue.put_nowait(
+                        f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'."
+                    )
+                try:
+                    model_inputs = tokenizer(
+                        inputs,
+                        max_length=request.max_length,
+                        truncation=True,
+                        padding="max_length",
+                    )
+                    queue.put_nowait("Validation input texts tokenized.")
+                except Exception as e:
+                    queue.put_nowait(f"Error tokenizing validation inputs: {e}")
+                    raise e
+                with tokenizer.as_target_tokenizer():
+                    labels = tokenizer(
+                        targets,
+                        max_length=request.max_length,
+                        truncation=True,
+                        padding="max_length",
+                    )
+                queue.put_nowait("Validation target texts tokenized.")
+                model_inputs["labels"] = labels["input_ids"]
+                queue.put_nowait("Validation labels assigned to model inputs.")
+                return model_inputs
 
-                    # Tokenize the inputs and targets
-                    try:
-                        model_inputs = tokenizer(
-                            inputs,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length"
-                        )
-                        await send_progress(client_id, "Input texts tokenized.")
-                    except Exception as e:
-                        await send_progress(client_id, f"Error tokenizing inputs: {e}")
-                        raise e
-
-                    with tokenizer.as_target_tokenizer():
-                        labels = tokenizer(
-                            targets,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length",
-                        )
-                    await send_progress(client_id, "Target texts tokenized.")
-
-                    # Assign labels
-                    labels_ids = labels["input_ids"]
-                    model_inputs["labels"] = labels_ids
-                    await send_progress(client_id, "Labels assigned to model inputs.")
-                    return model_inputs
-
-            else:
-                async def preprocess_function(examples):
-                    inputs = examples["source"]
-                    targets = examples["target"]
-
-                    # No language token prepending for non-multilingual models
-                    
-                    # Ensure all targets are non-empty strings
-                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
-
-                    # Send a sample for debugging
-                    if len(inputs) > 0:
-                        sample_input = inputs[0]
-                        sample_target = targets[0]
-                        await send_progress(client_id, f"Preprocessed Input Sample: {sample_input}")
-                        await send_progress(client_id, f"Preprocessed Target Sample: {sample_target}")
-
-                    # Tokenize the inputs
-                    try:
-                        model_inputs = tokenizer(
-                            inputs,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length"
-                        )
-                        await send_progress(client_id, "Input texts tokenized.")
-                    except Exception as e:
-                        await send_progress(client_id, f"Error tokenizing inputs: {e}")
-                        raise e
-
-                    with tokenizer.as_target_tokenizer():
-                        labels = tokenizer(
-                            targets,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length",
-                        )
-                    await send_progress(client_id, "Target texts tokenized.")
-
-                    # Assign labels
-                    labels_ids = labels["input_ids"]
-                    model_inputs["labels"] = labels_ids
-                    await send_progress(client_id, "Labels assigned to model inputs.")
-                    return model_inputs
-
-            # Apply preprocessing to the training dataset
-            logger.info("Applying preprocessing to the training dataset.")
-            await send_progress(client_id, "Applying preprocessing to the training dataset.")
-            tokenized_dataset = await run_map(dataset, preprocess_function, client_id)
-            tokenized_dataset.set_format("torch")
-            logger.info("Training dataset tokenization complete.")
-            await send_progress(client_id, "Training dataset tokenization complete.")
-
-            # Optionally prepare validation dataset
-            if validation_dataset:
-                async def preprocess_validation(examples):
-                    inputs = examples["source"]
-                    targets = examples["target"]
-
-                    if is_multilingual:
-                        inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
-                    
-                    targets = [text if isinstance(text, str) and text.strip() else " " for text in targets]
-
-                    if is_multilingual:
-                        tokenizer.src_lang = request.source_lang
-                        tokenizer.tgt_lang = request.target_lang
-
-                    try:
-                        model_inputs = tokenizer(
-                            inputs,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length"
-                        )
-                        await send_progress(client_id, "Validation input texts tokenized.")
-                    except Exception as e:
-                        await send_progress(client_id, f"Error tokenizing validation inputs: {e}")
-                        raise e
-
-                    with tokenizer.as_target_tokenizer():
-                        labels = tokenizer(
-                            targets,
-                            max_length=request.max_length,
-                            truncation=True,
-                            padding="max_length",
-                        )
-                    await send_progress(client_id, "Validation target texts tokenized.")
-
-                    model_inputs["labels"] = labels["input_ids"]
-                    await send_progress(client_id, "Validation labels assigned to model inputs.")
-                    return model_inputs
-
-                logger.info("Applying preprocessing to the validation dataset.")
-                await send_progress(client_id, "Applying preprocessing to the validation dataset.")
-                tokenized_validation = await run_map(validation_dataset, preprocess_validation, client_id)
-                tokenized_validation.set_format("torch")
-                logger.info("Validation dataset tokenization complete.")
-                await send_progress(client_id, "Validation dataset tokenization complete.")
-            else:
-                tokenized_validation = None
-                logger.info("No validation dataset provided.")
-                await send_progress(client_id, "No validation dataset provided.")
-        
-            training_args = TrainingArguments(
-                output_dir=request.output_dir,
-                num_train_epochs=request.num_train_epochs,         
-                per_device_train_batch_size=request.per_device_train_batch_size,
-                per_device_eval_batch_size=request.per_device_eval_batch_size,
-                learning_rate=request.learning_rate,
-                weight_decay=request.weight_decay,
-                logging_dir=os.path.join(request.output_dir, "logs"),
-                logging_steps=10,                      
-                save_steps=request.save_steps,                     
-                save_total_limit=request.save_total_limit,
-                save_strategy="steps",
-                evaluation_strategy="epoch" if tokenized_validation else "no",
-                eval_steps=request.save_steps if tokenized_validation else None,
-                load_best_model_at_end=True if tokenized_validation else False,
-                metric_for_best_model="loss",
-                fp16=torch.cuda.is_available(),
-            )        
-            logger.info("Training arguments set.")
-            await send_progress(client_id, "Training arguments set.")
-           
-            trainer = Trainer(
-                model=model,
-                args=training_args,
-                train_dataset=tokenized_dataset,
-                eval_dataset=tokenized_validation,
-                tokenizer=tokenizer,                
+            logger.info("Applying preprocessing to the validation dataset.")
+            await send_progress(
+                client_id, "Applying preprocessing to the validation dataset."
             )
-            logger.info("Trainer initialized.")
-            await send_progress(client_id, "Trainer initialized.")
-           
-            logger.info("Commencing training.")
-            await send_progress(client_id, "Commencing training.")
-            trainer.train()
-            logger.info("Training completed.")
-            await send_progress(client_id, "Training completed.")
-           
-            trainer.save_model(request.output_dir)
-            tokenizer.save_pretrained(request.output_dir)
-            logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
-            await send_progress(client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
-                     
-            success_message = "Fine-tuning process completed successfully."
-            logger.info(success_message)
-            await send_progress(client_id, success_message)
+            tokenized_validation = validation_dataset.map(
+                preprocess_validation,
+                batched=True,
+                remove_columns=["source", "target"],
+                desc="Tokenizing the validation dataset",
+                num_proc=4,
+            )
+            tokenized_validation.set_format("torch")
+            logger.info("Validation dataset tokenization complete.")
+            await send_progress(
+                client_id, "Validation dataset tokenization complete."
+            )
+        else:
+            logger.info("No validation dataset provided.")
+            await send_progress(
+                client_id, "No validation dataset provided."
+            )
+       
+        training_args = TrainingArguments(
+            output_dir=request.output_dir,
+            num_train_epochs=request.num_train_epochs,
+            per_device_train_batch_size=request.per_device_train_batch_size,
+            per_device_eval_batch_size=request.per_device_eval_batch_size,
+            learning_rate=request.learning_rate,
+            weight_decay=request.weight_decay,
+            logging_dir=os.path.join(request.output_dir, "logs"),
+            logging_steps=10,
+            save_steps=request.save_steps,
+            save_total_limit=request.save_total_limit,
+            save_strategy="steps",
+            evaluation_strategy="epoch" if tokenized_validation else "no",
+            eval_steps=request.save_steps if tokenized_validation else None,
+            load_best_model_at_end=True if tokenized_validation else False,
+            metric_for_best_model="loss",
+            fp16=torch.cuda.is_available(),
+        )
+        logger.info("Training arguments set.")
+        await send_progress(client_id, "Training arguments set.")
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=tokenized_dataset,
+            eval_dataset=tokenized_validation,
+            tokenizer=tokenizer,
+            callbacks=[WebSocketProgressCallback(client_id, queue)],
+        )
+        logger.info("Trainer initialized.")
+        await send_progress(client_id, "Trainer initialized.")
         
-        except Exception as e:         
-            error_message = f"Error during fine-tuning: {e}"
-            logger.error(error_message)
-            await send_progress(request.client_id, error_message)      
-  
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run())
-    loop.close()
+        logger.info("Commencing training.")
+        await send_progress(client_id, "Commencing training.")
+
+        # Run trainer.train() in a separate thread to avoid blocking the event loop        
+        await asyncio.to_thread(trainer.train)
+        logger.info("Training completed.")
+        await send_progress(client_id, "Training completed.")
+
+        # Save the fine-tuned model and tokenizer
+        trainer.save_model(request.output_dir)
+        tokenizer.save_pretrained(request.output_dir)
+        logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
+        await send_progress(
+            client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'."
+        )
+
+        success_message = "Fine-tuning process completed successfully."
+        logger.info(success_message)
+        await send_progress(client_id, success_message)
+
+    except Exception as e:
+        error_message = f"Error during fine-tuning: {e}"
+        logger.error(error_message)
+        await send_progress(client_id, error_message)
+    finally:
+        await queue.put("TRAINING_DONE")
+        await progress_task

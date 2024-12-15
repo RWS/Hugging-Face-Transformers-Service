@@ -77,8 +77,7 @@ def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)  # Set the desired logging level
     logger.addHandler(rotating_handler)
-
-    # Optionally, also log to the console
+  
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
@@ -139,70 +138,6 @@ def extract_assistant_response(response):
     return str(response)
 
 
-def move_snapshot_files(model_name: str, download_directory: str):
-    """Move snapshot files from the downloaded model's snapshots directory to its root."""
-    model_path = os.path.join(download_directory, model_name.replace('/', '--'))
-    snapshots_path = os.path.join(model_path, "snapshots")
-    
-    if os.path.exists(snapshots_path):
-        logger.info(f"Processing snapshots for model: {model_name}")
-        
-        # Iterate over items in the model_path
-        for item in os.listdir(model_path):
-            item_path = os.path.join(model_path, item)
-            
-            # Skip the 'snapshots' directory
-            if item == 'snapshots':
-                continue
-            
-            if os.path.isdir(item_path):
-                # If it's a directory, remove it and its contents
-                try:
-                    shutil.rmtree(item_path)
-                    logger.info(f"Removed directory: {item_path}")
-                except Exception as e:
-                    logger.error(f"Failed to remove directory {item_path}: {e}")
-            elif os.path.isfile(item_path):
-                # If it's a file, remove it
-                try:
-                    os.remove(item_path)
-                    logger.info(f"Removed file: {item_path}")
-                except Exception as e:
-                    logger.error(f"Failed to remove file {item_path}: {e}")
-            else:
-                logger.warning(f"Skipped unknown item type: {item_path}")
-        
-        # Handle snapshot directories
-        snapshot_dirs = glob.glob(os.path.join(snapshots_path, '*'))
-        if snapshot_dirs:
-            first_snapshot = snapshot_dirs[0] 
-            logger.info(f"Moving files from snapshot: {first_snapshot}")
-            
-            for item in os.listdir(first_snapshot):
-                source_path = os.path.join(first_snapshot, item)
-                destination_path = os.path.join(model_path, item)
-                
-                # Skip if the destination already exists
-                if os.path.exists(destination_path):
-                    logger.info(f"Destination already exists, skipping: {destination_path}")
-                    continue
-                
-                try:
-                    shutil.move(source_path, destination_path)
-                    logger.info(f"Moved {source_path} to {destination_path}")
-                except Exception as e:
-                    logger.error(f"Failed to move {source_path} to {destination_path}: {e}")
-            
-            # Remove the snapshots directory after moving files
-            try:
-                shutil.rmtree(snapshots_path)
-                logger.info(f"Removed snapshots directory: {snapshots_path}")
-            except Exception as e:
-                logger.error(f"Failed to remove snapshots directory {snapshots_path}: {e}")
-    else:
-        logger.warning(f"No snapshots directory found for model: {model_name}")
-
-
 
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
@@ -219,7 +154,7 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
     """
     Infer model type based on the presence of *.gguf files, 'README.md', or 'config.json'.
     
-    Priority: 
+    Priority:
     1. Parse 'README.md' for 'pipeline_tag' or 'tags'.
     2. Check for *.gguf files (indicates 'text-generation').
     3. Parse 'config.json' for 'model_type'.
@@ -232,6 +167,7 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
     - str: The inferred model type or 'unknown' if unable to determine.
     """
     model_path = os.path.join(download_directory, model_dir)
+    logger.info(f"Inferring model type for directory: {model_path}")
 
     # Parse README.md
     readme_path = os.path.join(model_path, 'README.md')
@@ -239,25 +175,25 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
         try:
             with open(readme_path, 'r', encoding='utf-8') as f:
                 readme_content = f.read()
-                
-                # Extract pipeline_tag
-                pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content, re.IGNORECASE)
-                if pipeline_tag_match:
-                    pipeline_tag = pipeline_tag_match.group(1).strip().lower()
-                    if pipeline_tag in SUPPORTED_PIPELINES:
-                        logger.info(f"Found pipeline_tag '{pipeline_tag}' in README.md. Model type: '{pipeline_tag}'")
-                        return pipeline_tag
-                
-                # Extract tags
-                tags_match = re.search(r'tags:\s*\n((?:\s*-\s*\w+)+)', readme_content, re.IGNORECASE)
-                if tags_match:
-                    tags_block = tags_match.group(1)
-                    tags = re.findall(r'-\s*(\w+)', tags_block)
-                    for tag in tags:
-                        tag_lower = tag.lower()
-                        if tag_lower in SUPPORTED_PIPELINES:
-                            logger.info(f"Found tag '{tag_lower}' in README.md. Model type: '{tag_lower}'")
-                            return tag_lower
+            
+            # Extract pipeline_tag
+            pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content, re.IGNORECASE)
+            if pipeline_tag_match:
+                pipeline_tag = pipeline_tag_match.group(1).strip().lower()
+                if pipeline_tag in SUPPORTED_PIPELINES:
+                    logger.info(f"Found pipeline_tag '{pipeline_tag}' in README.md. Model type: '{pipeline_tag}'")
+                    return pipeline_tag
+            
+            # Extract tags
+            tags_match = re.search(r'tags:\s*\n((?:\s*-\s*\w+)+)', readme_content, re.IGNORECASE)
+            if tags_match:
+                tags_block = tags_match.group(1)
+                tags = re.findall(r'-\s*(\w+)', tags_block)
+                for tag in tags:
+                    tag_lower = tag.lower()
+                    if tag_lower in SUPPORTED_PIPELINES:
+                        logger.info(f"Found tag '{tag_lower}' in README.md. Model type: '{tag_lower}'")
+                        return tag_lower
         except Exception as e:
             logger.error(f"Error reading README.md in {model_path}: {e}")
     
@@ -292,12 +228,19 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
 
 def get_directory_size(directory: str) -> int:
     """Calculate the total size of the directory."""
+    logger.info(f"Calculating size for directory: {directory}")
     total_size = 0
-    for dirpath, dirnames, filenames in os.walk(directory):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            if os.path.exists(fp):  # Check if the file exists
-                total_size += os.path.getsize(fp)
+    try:
+        for dirpath, dirnames, filenames in os.walk(directory):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if os.path.exists(fp):
+                    size = os.path.getsize(fp)
+                    total_size += size
+                    logger.info(f"Adding size of file '{fp}': {size} bytes")
+    except Exception as e:
+        logger.error(f"Error calculating directory size for {directory}: {e}")
+    logger.info(f"Total size for directory '{directory}': {total_size} bytes")
     return total_size
 
 
@@ -312,42 +255,52 @@ def format_size(size_bytes: int) -> str:
     Returns:
         str: Formatted size string with appropriate units.
     """
+    logger.debug(f"Formatting size: {size_bytes} bytes")
     if size_bytes == 0:
+        logger.info(f"Formatted size: 0 Bytes")
         return "0 Bytes"
     
     size_units = ['Bytes', 'KB', 'MB', 'GB', 'TB']
     index = 0
-    size = float(size_bytes) 
+    size = float(size_bytes)
     
     while size >= 1024 and index < len(size_units) - 1:
         size /= 1024
         index += 1
     
     formatted_size = f"{size:.0f} {size_units[index]}"
+    logger.info(f"Formatted size: {formatted_size}")
     return formatted_size
 
 
 def fetch_model_info(model_name: str, api_key: str):
     """Fetch model information from Hugging Face Hub."""
+    logger.info(f"Fetching model info for '{model_name}' with API key provided.")
     api = HfApi()
     try:
-        model_info = api.model_info(repo_id=model_name, token=api_key or config.HUGGINGFACE_TOKEN)
+        model_info = api.model_info(repo_id=model_name, token=api_key or os.getenv("HUGGINGFACE_TOKEN"))
+        logger.debug(f"Fetched model info for '{model_name}': {model_info}")
         return model_info
     except Exception as e:
-        logger.error(f"Failed to fetch model info: {e}")
+        logger.error(f"Failed to fetch model info for '{model_name}': {e}")
         raise
    
     
-async def get_file_size_via_head(url: str) -> Optional[int]:
+async def get_file_size_via_head(url: str, api_key: str) -> Optional[int]:
     """Retrieve the file size by performing a HEAD request with redirects allowed."""
+    logger.info(f"Attempting HEAD request to {url} to get file size.")
     try:
-        async with aiohttp.ClientSession() as session:
+        headers = {}
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.head(url, allow_redirects=True) as response:
                 if response.status == 200:
                     content_length = response.headers.get('Content-Length')
                     if content_length:
-                        logger.debug(f"Content-Length for {url}: {content_length}")
-                        return int(content_length)
+                        size = int(content_length)
+                        logger.info(f"Content-Length for {url}: {size} bytes")
+                        return size
                     else:
                         logger.warning(f"No Content-Length header for {url}")
                 else:
@@ -356,24 +309,28 @@ async def get_file_size_via_head(url: str) -> Optional[int]:
         logger.error(f"Failed to fetch size for URL {url}: {e}")
     return None
 
-async def get_file_size_via_get(url: str) -> Optional[int]:
+async def get_file_size_via_get(url: str, api_key: str) -> Optional[int]:
     """Retrieve the file size by performing a GET request with Range header."""
+    logger.info(f"Attempting GET request to {url} with Range header to get file size.")
     try:
         headers = {'Range': 'bytes=0-0'}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, allow_redirects=True) as response:
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, allow_redirects=True) as response:
                 if response.status in (200, 206):
                     content_range = response.headers.get('Content-Range')
-                    if content_range:                       
+                    if content_range:
                         size = content_range.split('/')[-1]
                         if size.isdigit():
-                            logger.debug(f"Content-Range for {url}: {content_range}")
-                            return int(size)
-                    else:
-                        content_length = response.headers.get('Content-Length')
-                        if content_length:
-                            logger.debug(f"Content-Length for {url}: {content_length}")
-                            return int(content_length)
+                            size_int = int(size)
+                            logger.info(f"Content-Range for {url}: {content_range} -> Size: {size_int} bytes")
+                            return size_int
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size = int(content_length)
+                        logger.info(f"Content-Length for {url}: {size} bytes")
+                        return size
                 else:
                     logger.warning(f"Received status {response.status} for GET request to {url}")
     except Exception as e:
@@ -382,14 +339,38 @@ async def get_file_size_via_get(url: str) -> Optional[int]:
 
 
 async def run_map(dataset: Dataset, preprocess_function, client_id: str):
+    """
+    Apply a preprocessing function to a dataset.
+
+    Parameters:
+    - dataset (Dataset): The dataset to process.
+    - preprocess_function (Callable): The preprocessing coroutine function.
+    - client_id (str): Identifier for logging or tracking purposes.
+
+    Returns:
+    - Dataset: The processed dataset.
+    """
+    logger.info(f"Running map on dataset with client_id: {client_id}")
     from functools import partial
 
-    def sync_preprocess(examples):
-        # Create a coroutine for each batch
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(preprocess_function(examples))
-        loop.close()
-        return result
+    async def async_preprocess(examples):
+        logger.info(f"Preprocessing examples with client_id: {client_id}")
+        try:
+            result = await preprocess_function(examples)
+            logger.info(f"Preprocessing successful for client_id: {client_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Error during preprocessing for client_id {client_id}: {e}")
+            raise
 
-    return dataset.map(sync_preprocess, batched=True, remove_columns=['source', 'target'])
+    try:
+        dataset = dataset.map(
+            lambda examples: asyncio.run(async_preprocess(examples)),
+            batched=True,
+            remove_columns=['source', 'target']
+        )
+        logger.info(f"Map operation completed for client_id: {client_id}")
+    except Exception as e:
+        logger.error(f"Failed to run map on dataset for client_id {client_id}: {e}")
+        raise
+    return dataset
