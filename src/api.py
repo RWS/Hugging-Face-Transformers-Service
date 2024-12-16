@@ -5,7 +5,7 @@ from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
@@ -31,16 +31,16 @@ executor = ThreadPoolExecutor(max_workers=5)
 
 @router.on_event("startup")
 async def startup_event():
-    print(f"Server host: {config.HOST}")
-    print(f"Server port: {config.PORT}")
-    print(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
-    print(f"Device is configured to use {model_state.device}")
+    logger.info(f"Server host: {config.HOST}")
+    logger.info(f"Server port: {config.PORT}")
+    logger.info(f"Models folder: {config.DOWNLOAD_DIRECTORY}")
+    logger.info(f"Device is configured to use {model_state.device}")
     # print(f"Hugging Face API {config.HUGGINGFACE_TOKEN}")
     # Check if the Hugging Face token is set correctly
     if config.HUGGINGFACE_TOKEN == "" or config.HUGGINGFACE_TOKEN == "Your_Hugging_Face_API_Token":
-        print("WARNING: You need to set your Hugging Face API token to download models.")
+        logger.warning("WARNING: You need to set your Hugging Face API token to download models.")
     else:
-        print("Hugging Face API token is set.")
+        logger.info("Hugging Face API token is set.")
 
 @router.on_event("shutdown")
 async def shutdown_event():
@@ -700,6 +700,7 @@ async def download_file(
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await manager.connect(client_id, websocket)
     logger.info(f"WebSocket connection established for client {client_id}")
+    model_states[client_id] = {"cancel_requested": False}
     try:
         while True:
             try:
@@ -711,15 +712,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     await manager.send_message(client_id, json.dumps({"type": "heartbeat_ack"}))
                 elif data == "cancel":
                     logger.info(f"Cancellation request received from {client_id}")                    
-                    if client_id in model_states:
-                        model_states[client_id]["cancel_requested"] = True
-                        await manager.send_message(
-                            client_id,
-                            json.dumps({
-                                "type": "cancellation_ack",
-                                "data": "Cancellation requested. Stopping download..."
-                            })
-                        )              
+                    model_states[client_id]["cancel_requested"] = True
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "type": "cancellation_ack",
+                            "data": "Cancellation requested. Stopping process..."
+                        })
+                    )              
                 else:
                     logger.info(f"Received message from {client_id}: {data}")
             except WebSocketDisconnect:
@@ -733,6 +733,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     except Exception as e:
         logger.error(f"Unexpected error in WebSocket endpoint for {client_id}: {e}")
         await manager.disconnect(client_id)
+    finally:
+        model_states.pop(client_id, None)
 
 
 @router.post(
@@ -1182,7 +1184,7 @@ async def get_model_info(
     - Model configuration or model information.
     """
 
-    logger.info('GET /model_info/')
+    logger.info('GET /model_info/ - request received.')
 
     if return_type not in ["config", "info"]:
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
@@ -1269,47 +1271,8 @@ async def get_model_info(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-
-class WebSocketProgressCallback(TrainerCallback):
-    def __init__(self, client_id: str, queue: asyncio.Queue):
-        self.client_id = client_id
-        self.queue = queue
-
-    def on_train_begin(self, args, state, control, **kwargs):
-        self.queue.put_nowait("Training started.")
-
-    def on_epoch_begin(self, args, state, control, **kwargs):
-        self.queue.put_nowait(f"Epoch {state.epoch} started.")
-
-    def on_epoch_end(self, args, state, control, **kwargs):
-        self.queue.put_nowait(f"Epoch {state.epoch} ended.")
-
-    def on_step_begin(self, args, state, control, **kwargs):
-        if state.global_step % 10 == 0:
-            self.queue.put_nowait(f"Step {state.global_step} started.")
-
-    def on_step_end(self, args, state, control, **kwargs):
-        if state.global_step % 10 == 0:
-            self.queue.put_nowait(f"Step {state.global_step} completed.")
-
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs:
-            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k, v in logs.items()])
-            self.queue.put_nowait(message)
-
-
-async def progress_sender(client_id: str, queue: asyncio.Queue):
-    while True:
-        message = await queue.get()
-        if message == "TRAINING_DONE":
-            break
-        await send_progress(client_id, message)
-        queue.task_done()
-
-async def send_progress(client_id: str, message: str):
-    json_message = json.dumps({"type": "progress", "message": message})
-    await manager.send_message(client_id, json_message)
-
+   
+    
 @router.post("/fine-tune/", summary="Fine-Tune a Pretrained Translation Model",
              description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
 async def fine_tune(
@@ -1320,7 +1283,7 @@ async def fine_tune(
     Initiates the fine-tuning of a pretrained translation model based on the provided parameters.
     The fine-tuning process runs in the background and sends progress updates via WebSocket.
     """
-    logger.info('POST /fine-tune/')
+    logger.info('POST /fine-tune/ - request received.')
 
     # Validate that the client_id is connected
     if request.client_id not in manager.active_connections:
@@ -1329,6 +1292,9 @@ async def fine_tune(
             status_code=400,
             detail=f"Client ID '{request.client_id}' is not connected via WebSocket."
         )
+
+    # Initialize the cancellation state
+    model_states[request.client_id] = {"cancel_requested": False}
 
     # Add the fine_tune_model task to background
     background_tasks.add_task(fine_tune_model, request)
@@ -1635,13 +1601,17 @@ async def fine_tune_model(request: FineTuneRequest):
         logger.info("Training arguments set.")
         await send_progress(client_id, "Training arguments set.")
 
+        # Initialize callbacks
+        websocket_progress_callback = WebSocketProgressCallback(client_id, queue)
+        cancel_training_callback = CancelTrainingCallback(client_id)
+
         trainer = Trainer(
             model=model,
             args=training_args,
             train_dataset=tokenized_dataset,
             eval_dataset=tokenized_validation,
             tokenizer=tokenizer,
-            callbacks=[WebSocketProgressCallback(client_id, queue)],
+            callbacks=[websocket_progress_callback, cancel_training_callback],
         )
         logger.info("Trainer initialized.")
         await send_progress(client_id, "Trainer initialized.")
@@ -1651,6 +1621,13 @@ async def fine_tune_model(request: FineTuneRequest):
 
         # Run trainer.train() in a separate thread to avoid blocking the event loop        
         await asyncio.to_thread(trainer.train)
+        
+        # Check if cancellation was requested
+        if model_states.get(client_id, {}).get("cancel_requested", False):
+            logger.info("Training was cancelled by the user.")
+            await send_progress(client_id, "Training was cancelled.")
+            return
+
         logger.info("Training completed.")
         await send_progress(client_id, "Training completed.")
 
@@ -1673,3 +1650,68 @@ async def fine_tune_model(request: FineTuneRequest):
     finally:
         await queue.put("TRAINING_DONE")
         await progress_task
+        # Clean up the cancellation request state
+        model_states.pop(client_id, None)
+
+async def progress_sender(client_id: str, queue: asyncio.Queue):
+    while True:
+        message = await queue.get()
+        if message == "TRAINING_DONE":
+            break
+        await send_progress(client_id, message)
+        queue.task_done()
+
+async def send_progress(client_id: str, message: str):
+    json_message = json.dumps({"type": "progress", "message": message})
+    await manager.send_message(client_id, json_message)
+
+class WebSocketProgressCallback(TrainerCallback):
+    def __init__(self, client_id: str, queue: asyncio.Queue):
+        self.client_id = client_id
+        self.queue = queue
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.queue.put_nowait("Training started.")
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        self.queue.put_nowait(f"Epoch {state.epoch} started.")
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        self.queue.put_nowait(f"Epoch {state.epoch} ended.")
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        if state.global_step % 10 == 0:
+            self.queue.put_nowait(f"Step {state.global_step} started.")
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.global_step % 10 == 0:
+            self.queue.put_nowait(f"Step {state.global_step} completed.")
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs:
+            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k, v in logs.items()])
+            self.queue.put_nowait(message)
+
+class CancelTrainingCallback(TrainerCallback):
+    def __init__(self, client_id: str):
+        self.client_id = client_id
+
+    def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        if model_states.get(self.client_id, {}).get("cancel_requested", False):
+            logger.info(f"Cancellation detected for client {self.client_id}. Stopping training.")
+            asyncio.create_task(send_progress(
+                self.client_id,
+                "Cancellation requested. Stopping training..."
+            ))
+            return TrainerControl.STOP
+        return control
+
+    def on_epoch_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        if model_states.get(self.client_id, {}).get("cancel_requested", False):
+            logger.info(f"Cancellation detected for client {self.client_id} at epoch end. Stopping training.")
+            asyncio.create_task(send_progress(
+                self.client_id,
+                "Cancellation requested. Stopping training..."
+            ))
+            return TrainerControl.STOP
+        return control        
