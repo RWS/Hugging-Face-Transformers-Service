@@ -2,7 +2,7 @@
 
 ## Overview
 
-This **Local LLM server** is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks.  
+This **Local LLM server** is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.  
 The application is built leveraging FastAPI, Python and is able to run a wide selection of Hugging Face LLMs models. It can run either as a local Windows service or can be included in a Docker container enabling users to download and mount models locally.
 
 ### Key Features
