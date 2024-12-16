@@ -5,7 +5,7 @@ from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
 from llama_cpp import Llama
 from huggingface_hub import HfApi
 import glob
@@ -243,7 +243,8 @@ async def list_models() -> List[ModelInfo]:
             
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Normalize model name
-            model_type = infer_model_type(model_dir, config.DOWNLOAD_DIRECTORY)
+
+            model_type = infer_model_type(model_path)
             model_size = get_directory_size(model_path)  # Calculate total size        
             formatted_size = format_size(model_size)
             is_mounted = any(
@@ -786,19 +787,13 @@ async def mount_model(request: MountModelRequest) -> dict:
     
     logger.info("POST /mount_model/ - Mount model request received.")
     model_name = request.model_name
-    requested_model_type = request.model_type
     properties = request.properties or {}
     specified_file_name = request.file_name
 
-    logger.info(
-        f"Mount Model Parameters - Model Name: {model_name}, Type: {requested_model_type}, "
-        f"Properties: {properties}, Specified File Name: {specified_file_name}"
-    )
-
     # Check if the model is already mounted
     if any(model.model_name == model_name for model in model_state.models):
-        logger.warning(f"Model '{model_name}' of type '{requested_model_type}' is already mounted.")
-        return {"message": f"Model '{model_name}' of type '{requested_model_type}' is already mounted."}
+        logger.warning(f"Model '{model_name}' is already mounted.")
+        return {"message": f"Model '{model_name}' is already mounted."}
     
     # Construct the model path based on the model name
     model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
@@ -808,6 +803,13 @@ async def mount_model(request: MountModelRequest) -> dict:
         logger.error(f"Model path '{model_path}' does not exist.")
         raise HTTPException(status_code=404, detail="Model path does not exist.")
     
+    requested_model_type = infer_model_type(model_path)
+
+    logger.info(
+        f"Mount Model Parameters - Model Name: {model_name}, Type: {requested_model_type}, "
+        f"Properties: {properties}, Specified File Name: {specified_file_name}"
+    )
+
     tokenizer = None
     model = None
     trans_pipeline = None
@@ -915,7 +917,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     logger.info(f"Model '{model_name}' of type '{requested_model_type}' mounted successfully.")
     
     response = {
-        "message": f"Model '{request.model_name}' of type '{request.model_type}' mounted successfully."
+        "message": f"Model '{request.model_name}' of type '{requested_model_type}' mounted successfully."
     }
     if properties:
         response["properties"] = properties
@@ -1312,154 +1314,134 @@ async def fine_tune_model(request: FineTuneRequest):
         await send_progress(client_id, "Fine-tuning process started.")
         logger.info("Starting fine-tuning process.")
 
+        model_type = infer_model_type(request.model_path)
+        if model_type == "unknown":
+            raise ValueError("Unable to determine the model type. Supported types are 'translation' and 'text-generation'.")
+
+        logger.info(f"Inferred model type: {model_type}")
+        await send_progress(client_id, f"Inferred model type: {model_type}")
+
         # Validate paths
-        if not os.path.exists(request.model_path):
-            raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
-        logger.info(f"Model path '{request.model_path}' exists.")
-        await send_progress(client_id, f"Model path '{request.model_path}' exists.")
+        model_path = request.model_path
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model directory '{model_path}' does not exist.")
+        logger.info(f"Model directory '{model_path}' exists.")
+        await send_progress(client_id, f"Model directory '{model_path}' exists.")
 
         if not os.path.exists(request.data_file):
             raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
         logger.info(f"Data file '{request.data_file}' exists.")
         await send_progress(client_id, f"Data file '{request.data_file}' exists.")
 
+        # Data Validation based on model type
+        expected_columns = {}
+        if model_type == "translation":
+            expected_columns = {"src_text", "tgt_text"}
+        elif model_type == "text-generation":
+            expected_columns = {"prompt", "completion"}
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+
+        df = pd.read_csv(request.data_file)
+        logger.info("Data file loaded into DataFrame.")
+        await send_progress(client_id, "Data file loaded into DataFrame.")
+
+        # Check for required columns
+        if not expected_columns.issubset(df.columns):
+            missing = expected_columns - set(df.columns)
+            raise ValueError(f"Data file is missing required columns: {missing}")
+
+        logger.info(f"Data file contains required columns: {expected_columns}")
+        await send_progress(client_id, f"Data file contains required columns: {expected_columns}")
+
+        # Further preprocessing based on model type
+        if model_type == "translation":
+            df = df.rename(columns={"src_text": "source", "tgt_text": "target"})
+        elif model_type == "text-generation":
+            df = df.rename(columns={"prompt": "source", "completion": "target"})
+
+        # Remove rows with empty target
+        initial_count = len(df)
+        df = df[df['target'].notna() & (df['target'].str.strip() != '')]
+        final_count = len(df)
+        logger.info(f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
+        await send_progress(client_id, f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
+        if final_count == 0:
+            raise ValueError("No valid examples found in the dataset after filtering out empty 'target'.")
+
+        # Prepare the dataset
+        dataset = Dataset.from_pandas(df)
+        logger.info("Dataset prepared and columns renamed.")
+        await send_progress(client_id, "Dataset prepared and columns renamed.")
+
         # Optionally load validation data
         validation_dataset = None
         if request.validation_file:
             if not os.path.exists(request.validation_file):
-                raise FileNotFoundError(
-                    f"Validation file '{request.validation_file}' does not exist."
-                )
+                raise FileNotFoundError(f"Validation file '{request.validation_file}' does not exist.")
             logger.info(f"Validation file '{request.validation_file}' exists.")
-            await send_progress(
-                client_id, f"Validation file '{request.validation_file}' exists."
-            )
+            await send_progress(client_id, f"Validation file '{request.validation_file}' exists.")
 
             df_val = pd.read_csv(request.validation_file)
-            if 'src_text' not in df_val.columns or 'tgt_text' not in df_val.columns:
-                raise ValueError(
-                    "Validation CSV data file must contain 'src_text' and 'tgt_text' columns."
-                )
-            df_val['src_text'] = df_val['src_text'].astype(str).fillna('').str.strip()
-            df_val['tgt_text'] = df_val['tgt_text'].astype(str).fillna('').str.strip()
-            df_val = df_val[df_val['tgt_text'] != '']
+
+            # Check for required columns in validation data
+            if not expected_columns.issubset(df_val.columns):
+                missing = expected_columns - set(df_val.columns)
+                raise ValueError(f"Validation data file is missing required columns: {missing}")
+
+            if model_type == "translation":
+                df_val = df_val.rename(columns={"src_text": "source", "tgt_text": "target"})
+            elif model_type == "text-generation":
+                df_val = df_val.rename(columns={"prompt": "source", "completion": "target"})
+
+            # Remove empty targets
+            df_val = df_val[df_val['target'].notna() & (df_val['target'].str.strip() != '')]
             if len(df_val) == 0:
-                raise ValueError(
-                    "No valid examples found in the validation dataset after filtering."
-                )
+                raise ValueError("No valid examples found in the validation dataset after filtering out empty 'target'.")
+
             validation_dataset = Dataset.from_pandas(df_val)
-            validation_dataset = validation_dataset.rename_column("src_text", "source")
-            validation_dataset = validation_dataset.rename_column("tgt_text", "target")
             logger.info("Validation dataset loaded and prepared.")
-            await send_progress(
-                client_id, "Validation dataset loaded and prepared."
-            )
+            await send_progress(client_id, "Validation dataset loaded and prepared.")
 
-        # Load tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(request.model_path)
-        model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
+        # Load tokenizer and model based on model type
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        if model_type == "translation":
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        elif model_type == "text-generation":
+            model = AutoModelForCausalLM.from_pretrained(model_path)
         logger.info("Tokenizer and Model loaded successfully.")
-        await send_progress(
-            client_id, "Tokenizer and Model loaded successfully."
-        )
+        await send_progress(client_id, "Tokenizer and Model loaded successfully.")
 
-        # Detect if the model is multilingual by checking lang_code_to_id
+        # Handle multilingual models if applicable
         is_multilingual = False
-        if hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
+        if model_type == "translation" and hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
             is_multilingual = True
             logger.info("Model is detected as multilingual based on tokenizer.")
-            await send_progress(
-                client_id, "Model is detected as multilingual based on tokenizer."
-            )
+            await send_progress(client_id, "Model is detected as multilingual based on tokenizer.")
 
-        if is_multilingual:
             if not request.source_lang or not request.target_lang:
-                raise ValueError(
-                    "Source and target language codes must be provided for multilingual models."
-                )
+                raise ValueError("Source and target language codes must be provided for multilingual models.")
             if request.source_lang not in tokenizer.lang_code_to_id:
-                raise ValueError(
-                    f"Unsupported source language code: '{request.source_lang}'"
-                )
+                raise ValueError(f"Unsupported source language code: '{request.source_lang}'")
             if request.target_lang not in tokenizer.lang_code_to_id:
-                raise ValueError(
-                    f"Unsupported target language code: '{request.target_lang}'"
-                )
-            logger.info(
-                f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported."
-            )
-            await send_progress(
-                client_id,
-                f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.",
-            )
+                raise ValueError(f"Unsupported target language code: '{request.target_lang}'")
+            logger.info(f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
+            await send_progress(client_id, f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
+
         else:
-            logger.info(
-                "Model is detected as non-multilingual. Language codes will be ignored."
-            )
-            await send_progress(
-                client_id,
-                "Model is detected as non-multilingual. Language codes will be ignored.",
-            )
+            logger.info("Model is detected as non-multilingual or not applicable. Language codes will be ignored.")
+            await send_progress(client_id, "Model is detected as non-multilingual or not applicable. Language codes will be ignored.")
 
         # Create output directory if it doesn't exist
         os.makedirs(request.output_dir, exist_ok=True)
         logger.info(f"Output directory '{request.output_dir}' is ready.")
-        await send_progress(
-            client_id, f"Output directory '{request.output_dir}' is ready."
-        )
+        await send_progress(client_id, f"Output directory '{request.output_dir}' is ready.")
 
-        # Load and prepare the training dataset
-        df = pd.read_csv(request.data_file)
-        logger.info("Training data file loaded into DataFrame.")
-        await send_progress(
-            client_id, "Training data file loaded into DataFrame."
-        )
-        if 'src_text' not in df.columns or 'tgt_text' not in df.columns:
-            raise ValueError(
-                "CSV data file must contain 'src_text' and 'tgt_text' columns."
-            )
-        logger.info("Training CSV data file contains required columns.")
-        await send_progress(
-            client_id, "Training CSV data file contains required columns."
-        )
-        df['src_text'] = df['src_text'].astype(str).fillna('').str.strip()
-        df['tgt_text'] = df['tgt_text'].astype(str).fillna('').str.strip()
-        logger.info(
-            "Converted 'src_text' and 'tgt_text' to strings and handled missing values."
-        )
-        await send_progress(
-            client_id,
-            "Converted 'src_text' and 'tgt_text' to strings and handled missing values.",
-        )
-        # Remove rows where 'tgt_text' is empty
-        initial_count = len(df)
-        df = df[df['tgt_text'] != '']
-        final_count = len(df)
-        logger.info(
-            f"Filtered dataset: {final_count} out of {initial_count} examples remain."
-        )
-        await send_progress(
-            client_id,
-            f"Filtered dataset: {final_count} out of {initial_count} examples remain.",
-        )
-        if final_count == 0:
-            raise ValueError(
-                "No valid examples found in the dataset after filtering out empty 'tgt_text'."
-            )
-        # Prepare the dataset
-        dataset = Dataset.from_pandas(df)
-        dataset = dataset.rename_column("src_text", "source")
-        dataset = dataset.rename_column("tgt_text", "target")
-        logger.info("Training dataset prepared and columns renamed.")
-        await send_progress(
-            client_id, "Training dataset prepared and columns renamed."
-        )
-
-        # Define the preprocessing function
+        # Define the preprocessing function based on model type
         def preprocess_function(examples):
             inputs = examples["source"]
             targets = examples["target"]
-            if is_multilingual:
+            if is_multilingual and model_type == "translation":
                 inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
             targets = [
                 text if isinstance(text, str) and text.strip() else " "
@@ -1470,12 +1452,11 @@ async def fine_tune_model(request: FineTuneRequest):
                 sample_target = targets[0]
                 queue.put_nowait(f"Preprocessed Input Sample: {sample_input}")
                 queue.put_nowait(f"Preprocessed Target Sample: {sample_target}")
-            if is_multilingual:
+            if is_multilingual and model_type == "translation":
                 tokenizer.src_lang = request.source_lang
                 tokenizer.tgt_lang = request.target_lang
-                queue.put_nowait(
-                    f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'."
-                )
+                queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
+
             try:
                 model_inputs = tokenizer(
                     inputs,
@@ -1487,6 +1468,7 @@ async def fine_tune_model(request: FineTuneRequest):
             except Exception as e:
                 queue.put_nowait(f"Error tokenizing inputs: {e}")
                 raise e
+
             with tokenizer.as_target_tokenizer():
                 labels = tokenizer(
                     targets,
@@ -1501,9 +1483,7 @@ async def fine_tune_model(request: FineTuneRequest):
 
         # Apply preprocessing to the training dataset
         logger.info("Applying preprocessing to the training dataset.")
-        await send_progress(
-            client_id, "Applying preprocessing to the training dataset."
-        )
+        await send_progress(client_id, "Applying preprocessing to the training dataset.")
         tokenized_dataset = dataset.map(
             preprocess_function,
             batched=True,
@@ -1513,9 +1493,7 @@ async def fine_tune_model(request: FineTuneRequest):
         )
         tokenized_dataset.set_format("torch")
         logger.info("Training dataset tokenization complete.")
-        await send_progress(
-            client_id, "Training dataset tokenization complete."
-        )
+        await send_progress(client_id, "Training dataset tokenization complete.")
 
         # Optionally prepare validation dataset
         tokenized_validation = None
@@ -1523,18 +1501,17 @@ async def fine_tune_model(request: FineTuneRequest):
             def preprocess_validation(examples):
                 inputs = examples["source"]
                 targets = examples["target"]
-                if is_multilingual:
+                if is_multilingual and model_type == "translation":
                     inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
                 targets = [
                     text if isinstance(text, str) and text.strip() else " "
                     for text in targets
                 ]
-                if is_multilingual:
+                if is_multilingual and model_type == "translation":
                     tokenizer.src_lang = request.source_lang
                     tokenizer.tgt_lang = request.target_lang
-                    queue.put_nowait(
-                        f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'."
-                    )
+                    queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
+
                 try:
                     model_inputs = tokenizer(
                         inputs,
@@ -1559,9 +1536,7 @@ async def fine_tune_model(request: FineTuneRequest):
                 return model_inputs
 
             logger.info("Applying preprocessing to the validation dataset.")
-            await send_progress(
-                client_id, "Applying preprocessing to the validation dataset."
-            )
+            await send_progress(client_id, "Applying preprocessing to the validation dataset.")
             tokenized_validation = validation_dataset.map(
                 preprocess_validation,
                 batched=True,
@@ -1571,15 +1546,12 @@ async def fine_tune_model(request: FineTuneRequest):
             )
             tokenized_validation.set_format("torch")
             logger.info("Validation dataset tokenization complete.")
-            await send_progress(
-                client_id, "Validation dataset tokenization complete."
-            )
+            await send_progress(client_id, "Validation dataset tokenization complete.")
         else:
             logger.info("No validation dataset provided.")
-            await send_progress(
-                client_id, "No validation dataset provided."
-            )
-       
+            await send_progress(client_id, "No validation dataset provided.")
+
+        # Define training arguments
         training_args = TrainingArguments(
             output_dir=request.output_dir,
             num_train_epochs=request.num_train_epochs,
@@ -1620,8 +1592,9 @@ async def fine_tune_model(request: FineTuneRequest):
         await send_progress(client_id, "Commencing training.")
 
         # Run trainer.train() in a separate thread to avoid blocking the event loop        
-        await asyncio.to_thread(trainer.train)
-        
+        train_future = asyncio.to_thread(trainer.train)
+        await train_future
+
         # Check if cancellation was requested
         if model_states.get(client_id, {}).get("cancel_requested", False):
             logger.info("Training was cancelled by the user.")
@@ -1635,9 +1608,7 @@ async def fine_tune_model(request: FineTuneRequest):
         trainer.save_model(request.output_dir)
         tokenizer.save_pretrained(request.output_dir)
         logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
-        await send_progress(
-            client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'."
-        )
+        await send_progress(client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
 
         success_message = "Fine-tuning process completed successfully."
         logger.info(success_message)

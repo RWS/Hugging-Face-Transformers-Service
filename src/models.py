@@ -85,12 +85,6 @@ class TextGenerationRequest(BaseModel):
 class MountModelRequest(BaseModel):
     model_name: str = Field(...,description="The Hugging Face model name."
     )
-    model_type: str = Field(...,
-        description=(
-            "Type of model to mount. Supported model types: "
-            "'translation', 'text-generation', 'llama'."
-        )
-    )
     properties: Optional[Dict[str, str]] = Field(
         default=None,
         description="Optional dictionary of additional properties (e.g., src_lang, tgt_lang)."
@@ -103,13 +97,11 @@ class MountModelRequest(BaseModel):
         protected_namespaces = ()
         json_schema_extra = {
             "example": {
-                "model_name": "facebook/nllb-200-distilled-600M",
-                "model_type": "translation",
+                "model_name": "facebook/nllb-200-distilled-600M",                
                 "properties": {
                     "src_lang": "eng_Latn",
                     "tgt_lang": "ita_Latn"
-                },
-                "file_name": "Marco-o1-IQ2_M.gguf"  # Example for llama models
+                }
             }
         }
 
@@ -246,4 +238,23 @@ class FineTuneRequest(BaseModel):
     save_total_limit: Optional[int] = Field(3, description="Maximum number of checkpoints to save.")  
     validation_file: Optional[str] = Field(None, description="Path to the CSV validation data file (optional).")  
     class Config:
-        protected_namespaces = ()     
+        protected_namespaces = ()
+        json_schema_extra = {
+            "example": {
+                "client_id": "client123",
+                "model_path": "C:/HuggingFace/Models/Helsinki-NLP--opus-mt-en-it",
+                "output_dir": "C:/HuggingFace/Models/Helsinki-NLP--opus-mt-en-it-finetuned-it",
+                "data_file": "C:/HuggingFace/Data/data.csv",
+                "validation_file": "C:/HuggingFace/Data/validation_data.csv",
+                #"source_lang": "en_XX",
+                #"target_lang": "it_IT",
+                "num_train_epochs": 4,
+                "per_device_train_batch_size": 2,
+                "per_device_eval_batch_size": 2,
+                "learning_rate": 3e-5,
+                "weight_decay": 0.01,
+                "max_length": 512,
+                "save_steps": 10,
+                "save_total_limit": 2                
+            }
+        }  

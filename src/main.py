@@ -7,8 +7,8 @@ setup_logging()
 
 app = FastAPI(
     title="Hugging Face Transformers Service",
-    description="This **Local LLM server** application is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
-    version="1.0.7"
+    description="This **Local LLM server** application is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
+    version="1.0.8"
 )
 
 app.include_router(router)

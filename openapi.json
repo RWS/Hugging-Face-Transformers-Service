@@ -2,14 +2,14 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Hugging Face Transformers Service",
-    "description": "This **Local LLM server** application is a Windows service application designed to provide an intuitive and efficient interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
-    "version": "1.0.5"
+    "description": "This **Local LLM server** application is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
+    "version": "1.0.8"
   },
   "paths": {
     "/download_directory": {
       "post": {
         "summary": "Get Download Path",
-        "description": "Retrieve the current download directory.\n\nIf `model_name` is provided and not empty, include it in the path.",
+        "description": "Retrieve the current download directory.\nIf `model_name` is provided and not empty, include it in the path.",
         "operationId": "get_download_path_download_directory_post",
         "requestBody": {
           "content": {
@@ -737,7 +737,7 @@
             ],
             "title": "Max Length",
             "description": "Maximum sequence length for tokenization.",
-            "default": 128
+            "default": 512
           },
           "save_steps": {
             "anyOf": [
@@ -785,7 +785,22 @@
           "output_dir",
           "data_file"
         ],
-        "title": "FineTuneRequest"
+        "title": "FineTuneRequest",
+        "example": {
+          "client_id": "client123",
+          "data_file": "C:/HuggingFace/Data/data.csv",
+          "learning_rate": 3e-05,
+          "max_length": 512,
+          "model_path": "C:/HuggingFace/Models/Helsinki-NLP--opus-mt-en-it",
+          "num_train_epochs": 4,
+          "output_dir": "C:/HuggingFace/Models/Helsinki-NLP--opus-mt-en-it-finetuned-it",
+          "per_device_eval_batch_size": 2,
+          "per_device_train_batch_size": 2,
+          "save_steps": 10,
+          "save_total_limit": 2,
+          "validation_file": "C:/HuggingFace/Data/validation_data.csv",
+          "weight_decay": 0.01
+        }
       },
       "GeneratedResponse": {
         "properties": {
@@ -1044,11 +1059,6 @@
             "title": "Model Name",
             "description": "The Hugging Face model name."
           },
-          "model_type": {
-            "type": "string",
-            "title": "Model Type",
-            "description": "Type of model to mount. Supported model types: 'translation', 'text-generation', 'llama'."
-          },
           "properties": {
             "anyOf": [
               {
@@ -1079,14 +1089,11 @@
         },
         "type": "object",
         "required": [
-          "model_name",
-          "model_type"
+          "model_name"
         ],
         "title": "MountModelRequest",
         "example": {
-          "file_name": "Marco-o1-IQ2_M.gguf",
           "model_name": "facebook/nllb-200-distilled-600M",
-          "model_type": "translation",
           "properties": {
             "src_lang": "eng_Latn",
             "tgt_lang": "ita_Latn"

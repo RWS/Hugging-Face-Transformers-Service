@@ -55,10 +55,14 @@ Enable users to **fine-tune pretrained translation models** with their own datas
     "data_file": "/path/to/data.csv",
     "source_lang": "en_XX",
     "target_lang": "it_IT",
-    "num_train_epochs": 5,
-    "per_device_train_batch_size": 4,
-    "learning_rate": 2e-5
-    // ... other parameters
+    "num_train_epochs": 4,
+    "per_device_train_batch_size": 2,
+    "per_device_eval_batch_size": 2,
+    "learning_rate": 3e-5,
+    "weight_decay": 0.01,
+    "max_length": 512,
+    "save_steps": 10,
+    "save_total_limit": 2
   }
   ```
 

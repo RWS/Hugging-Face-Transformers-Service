@@ -24,8 +24,8 @@ SUPPORTED_MODEL_TYPES = {
 
 SUPPORTED_PIPELINES = {
     "text-generation",
-    "text2text-generation",
-    "summarization",
+    #"text2text-generation",
+    #"summarization",
     "translation"
 }
 
@@ -149,33 +149,30 @@ def filter_unwanted_files(files):
         if file.rfilename not in unwanted_files and '/' not in file.rfilename and '\\' not in file.rfilename
     ]
 
-
-def infer_model_type(model_dir: str, download_directory: str) -> str:
+def infer_model_type(model_path: str) -> str:
     """
     Infer model type based on the presence of *.gguf files, 'README.md', or 'config.json'.
-    
+   
     Priority:
     1. Parse 'README.md' for 'pipeline_tag' or 'tags'.
     2. Check for *.gguf files (indicates 'text-generation').
     3. Parse 'config.json' for 'model_type'.
-    
+   
     Parameters:
-    - model_dir (str): The directory name of the model.
-    - download_directory (str): The base path where models are stored.
-    
+    - model_path (str): The full path to the model directory.
+   
     Returns:
     - str: The inferred model type or 'unknown' if unable to determine.
     """
-    model_path = os.path.join(download_directory, model_dir)
-    logger.info(f"Inferring model type for directory: {model_path}")
-
+    logger.info(f"Inferring model type for path: {model_path}")
+    
     # Parse README.md
     readme_path = os.path.join(model_path, 'README.md')
     if os.path.exists(readme_path):
         try:
             with open(readme_path, 'r', encoding='utf-8') as f:
                 readme_content = f.read()
-            
+           
             # Extract pipeline_tag
             pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content, re.IGNORECASE)
             if pipeline_tag_match:
@@ -183,7 +180,7 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
                 if pipeline_tag in SUPPORTED_PIPELINES:
                     logger.info(f"Found pipeline_tag '{pipeline_tag}' in README.md. Model type: '{pipeline_tag}'")
                     return pipeline_tag
-            
+           
             # Extract tags
             tags_match = re.search(r'tags:\s*\n((?:\s*-\s*\w+)+)', readme_content, re.IGNORECASE)
             if tags_match:
@@ -196,13 +193,13 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
                         return tag_lower
         except Exception as e:
             logger.error(f"Error reading README.md in {model_path}: {e}")
-    
+   
     # Check for .gguf files
     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
     if gguf_files:
         logger.info(f"Detected .gguf files in {model_path}. Model type: 'text-generation'")
         return "text-generation"
-    
+   
     # Parse config.json
     config_path = os.path.join(model_path, 'config.json')
     if os.path.exists(config_path):
@@ -221,10 +218,9 @@ def infer_model_type(model_dir: str, download_directory: str) -> str:
                     return inferred_type
         except Exception as e:
             logger.error(f"Error reading config.json in {model_path}: {e}")
-    
-    logger.warning(f"Could not determine model type for {model_dir}. Defaulting to 'unknown'.")
+   
+    logger.warning(f"Could not determine model type for {model_path}. Defaulting to 'unknown'.")
     return "unknown"
-
 
 def get_directory_size(directory: str) -> int:
     """Calculate the total size of the directory."""
