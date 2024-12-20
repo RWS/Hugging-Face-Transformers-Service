@@ -47,11 +47,15 @@ def main():
     )
     app.include_router(router)
 
-
     from config import config
     logger.info(f"API Name: {app.title}")
     logger.info(f"API Version: {app.version}")
-
+    
+    config.HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", "Your_Hugging_Face_API_Token")
+    config.HOST = os.getenv("HOST", "0.0.0.0")
+    config.PORT = os.getenv("PORT", "8001")
+    config.DOWNLOAD_DIRECTORY = os.getenv("HUGGINGFACE_MODELS_DIR", "C:/HuggingFace/Models")
+    
     import uvicorn
     try:
         uvicorn.run(

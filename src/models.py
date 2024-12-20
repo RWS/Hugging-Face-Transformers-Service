@@ -15,72 +15,104 @@ class TranslationRequest(BaseModel):
             }
         }
 
+class GeneratedResponse(BaseModel):
+    generated_response: str
+    class Config:    
+        protected_namespaces = ()     
 
-class TextGenerationRequest(BaseModel):
-    model_name: str = Field(..., description="The name of the text generation model to use."
-    )
-    prompt: Optional[List[Dict[str, str]]] = Field(
-        None,
-        description=(
-            "The User Prompt comprised of custom instructions provided by the user.\n"
-            "Should be a list of messages with roles like 'system', 'user', and 'assistant'."
-        )
-    )
-    prompt_plain: Optional[str] = Field(
-        None,
-        description="A plain text prompt for models that do not use message-based inputs."
-    )
-    max_tokens: int = Field(
-        default=250, 
-        description="The maximum number of tokens to generate."
-    )
-    temperature: float = Field(
-        default=1.0, 
-        description="Sampling temperature for generation."
-    )
-    result_type: str = Field(
-        default='assistant', 
-        description="Indicates the response type: 'raw' or 'assistant'."
-    )
-    
-    @model_validator(mode='before')
-    @classmethod
-    def check_prompt_types(cls, values):
-        prompt, prompt_plain = values.get('prompt'), values.get('prompt_plain')
-        if not prompt and not prompt_plain:
-            raise ValueError("Either 'prompt' or 'prompt_plain' must be provided.")
-        if prompt and prompt_plain:
-            raise ValueError("Provide only one of 'prompt' or 'prompt_plain', not both.")
-        return values
+
+# Completion Models
+class CompletionChoice(BaseModel):
+    text: str
+    index: int
+    logprobs: Optional[Dict] = None
+    finish_reason: Optional[str] = None
+
+
+class CompletionResponse(BaseModel):
+    id: str
+    object: str
+    #created: int
+    model: str
+    choices: List[CompletionChoice]
+
+
+class CompletionRequest(BaseModel):
+    model_name: str = Field(..., description="Name of the text generation model to use.")
+    prompt: str = Field(..., description="The input text prompt for text generation.")
+    max_tokens: Optional[int] = Field(500, description="Maximum number of tokens to generate.")
+    temperature: Optional[float] = Field(0.7, description="Sampling temperature.")
+    top_p: Optional[float] = Field(1.0, description="Nucleus sampling probability.")
+    n: Optional[int] = Field(1, description="Number of completions to generate.")
+    stop: Optional[List[str]] = Field(None, description="Sequences where the API will stop generating further tokens.")
+    echo: Optional[bool] = Field(False, description="Whether to echo the prompt in the completion.")
+    best_of: Optional[int] = Field(1, description="Generates `best_of` completions server-side and returns the best.")
 
     class Config:
         json_schema_extra = {
-            "examples": [
-                {
-                    "summary": "Chat-like prompt for GPT-4",
-                    "value": {
-                        "model_name": "gpt-4",
-                        "prompt": [
-                            {"role": "system", "content": "You are a helpful assistant."},
-                            {"role": "user", "content": "Generate a response to this prompt."}
-                        ],
-                        "max_tokens": 100,
-                        "temperature": 1.0,
-                        "result_type": "assistant"
-                    }
-                },
-                {
-                    "summary": "Plain text prompt for XGLM",
-                    "value": {
-                        "model_name": "facebook/xglm-7.5B",
-                        "prompt_plain": "Translate the following English sentence to French: 'I love programming.'",
-                        "max_tokens": 100,
-                        "temperature": 0.7,
-                        "result_type": "assistant"
-                    }
-                }
-            ]
+            "example": {
+                "model_name": "gpt-3.5-turbo",
+                "prompt": "Once upon a time,",
+                "max_tokens": 50,
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "n": 1,
+                "stop": ["\n"],
+                "echo": False,
+                "best_of": 1
+            }
         }
+
+
+# Chat Completion Models
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="Role of the message sender (e.g., 'user', 'assistant').")
+    content: str = Field(..., description="Content of the message.")
+
+
+class ChatCompletionChoice(BaseModel):
+    message: ChatMessage
+    index: int
+    finish_reason: Optional[str] = None
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str
+    #created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+
+
+class ChatCompletionRequest(BaseModel):
+    model_name: str = Field(..., description="Name of the chat model to use.")
+    messages: List[ChatMessage] = Field(..., description="List of messages in the conversation.")
+    max_tokens: Optional[int] = Field(500, description="Maximum number of tokens to generate.")
+    temperature: Optional[float] = Field(0.7, description="Sampling temperature.")
+    top_p: Optional[float] = Field(1.0, description="Nucleus sampling probability.")
+    n: Optional[int] = Field(1, description="Number of completions to generate.")
+    stop: Optional[List[str]] = Field(None, description="Sequences where the API will stop generating further tokens.")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "model_name": "gpt-4",
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "Tell me a joke."}
+                ],
+                "max_tokens": 100,
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "n": 1,
+                "stop": None
+            }
+        }
+
+
+
+
+
 
 class MountModelRequest(BaseModel):
     model_name: str = Field(...,description="The Hugging Face model name."
@@ -105,17 +137,9 @@ class MountModelRequest(BaseModel):
             }
         }
 
-class GeneratedResponse(BaseModel):
-    generated_response: Union[str, List[Dict[str, Any]]] = Field(
-        description=(
-            "The generated text from the model based on the provided prompt. "
-            "It can be either a string (when 'assistant' response is requested) "
-            "or a list of dictionaries containing raw response data."
-        ),
-        example="Il gatto è sul tavolo.",
-    )
-    class Config:    
-        protected_namespaces = ()      
+
+
+
 
 class ListModelFilesRequest(BaseModel):
     model_name: str = Field(..., description="The Hugging Face model repository name, e.g., 'username/model-name'")

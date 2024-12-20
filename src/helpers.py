@@ -3,11 +3,10 @@ import os
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
-from config import config
 from huggingface_hub import HfApi
-from typing import Optional
+from typing import Optional, List
 from datasets import Dataset
-import shutil
+from models import CompletionResponse, ChatCompletionResponse
 import glob
 import re
 import json
@@ -50,7 +49,11 @@ def get_model_type(task: str):
     else:
         raise ValueError(f"Unsupported task: {task}")
 
+def extract_assistant_response_completions(results: CompletionResponse) -> List[str]:
+    return [choice.text for choice in results.choices]
 
+def extract_assistant_response_chat(results: ChatCompletionResponse) -> List[str]:
+    return [choice.message.content for choice in results.choices]
 
 def setup_logging():
     base_dir = get_base_directory()
@@ -58,8 +61,7 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)  
 
     log_file = os.path.join(log_dir, "hfts.log")
-
-    # Configure a rotating file handler
+   
     rotating_handler = RotatingFileHandler(
         filename=log_file,
         maxBytes=10*1024*1024,  # 10 MB
@@ -75,7 +77,7 @@ def setup_logging():
     rotating_handler.setFormatter(formatter)
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)  # Set the desired logging level
+    logger.setLevel(logging.INFO) 
     logger.addHandler(rotating_handler)
   
     console_handler = logging.StreamHandler()
@@ -100,14 +102,12 @@ def get_base_directory() -> str:
         # If unfrozen, return the directory of the script file.
         return os.path.dirname(os.path.abspath(__file__))
 
-
 def extract_assistant_response(response):
     """
     Extracts the content from the first 'assistant' role in the response.
 
     Supports different response structures to ensure compatibility with various LLMs.
     """
-    # Handle list responses by taking the first element
     if isinstance(response, list) and len(response) > 0:
         response = response[0]
 
