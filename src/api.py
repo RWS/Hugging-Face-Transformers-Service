@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import APIRouter, Header, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from huggingface_hub import hf_hub_url
-from models import FineTuneRequest, TranslationRequest, GeneratedResponse, CompletionChoice, CompletionRequest, ChatCompletionChoice, CompletionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesRequest, ListModelFilesResponse, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryRequest, DownloadDirectoryResponse
+from models import FineTuneRequest, DeleteModelResponse, TranslationRequest, GeneratedResponse, CompletionChoice, CompletionRequest, ChatCompletionChoice, CompletionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesResponse, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
-from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, extract_assistant_response, fetch_model_info
+from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, fetch_model_info
 from config import config
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
 from llama_cpp import Llama
@@ -22,6 +22,7 @@ import pandas as pd
 from datasets import Dataset
 import aiofiles
 import uuid
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -51,20 +52,19 @@ async def shutdown_event():
     print("Shutting down the server.")
 
 
-@router.post("/model/directory", response_model=DownloadDirectoryResponse)
-def get_download_path(request: DownloadDirectoryRequest) -> DownloadDirectoryResponse:
+@router.get("/model/directory", response_model=DownloadDirectoryResponse)
+def get_download_path(model_name: str = Query(None, description="Name of the model to include in the path")) -> DownloadDirectoryResponse:
     """
     Retrieve the current download directory.
     If `model_name` is provided and not empty, include it in the path.
     """
     download_dir = config.DOWNLOAD_DIRECTORY.replace('/', '\\')
-    logger.info('POST /model/directory - Retrieving download directory path.')
-    
+    logger.info('GET /v1/model/directory - Retrieving download directory path.')
+
     if not os.path.exists(download_dir):
         logger.error(f"Base download directory does not exist: {download_dir}")
         raise HTTPException(status_code=500, detail=f"Base download directory does not exist: {download_dir}")
-    
-    model_name = request.model_name
+
     if model_name and model_name.strip():
         sanitized_model_name = model_name.replace('/', '--')
         model_path = os.path.join(download_dir, sanitized_model_name)
@@ -75,7 +75,7 @@ def get_download_path(request: DownloadDirectoryRequest) -> DownloadDirectoryRes
         return DownloadDirectoryResponse(path=download_dir)
     
 
-@router.post(
+@router.get(
     "/model/files",
     summary="List Model Files",
     description=(
@@ -106,67 +106,67 @@ def get_download_path(request: DownloadDirectoryRequest) -> DownloadDirectoryRes
     },
 )
 async def list_model_files_endpoint(
-    request: ListModelFilesRequest
+    model_name: str = Query(..., description="Name of the Hugging Face model repository"),
+    api_key: Optional[str] = Header(None, description="Hugging Face API key"),
 ) -> ListModelFilesResponse:
     """
     Retrieves the list of available files in the specified Hugging Face model repository,
     including each file's size when available. Only files in the root directory are listed.
     """
-    logger.info('POST /list_model_files/ - Listing model files.')
-    model_name = request.model_name
-    api_key = request.api_key or os.getenv("HUGGINGFACE_TOKEN")
+    logger.info('GET /v1/model/files - Listing model files.')
+    effective_api_key = api_key if api_key else config.HUGGINGFACE_TOKEN
     
     if not model_name:
         logger.warning("list_model_files_endpoint called without 'model_name'.")
         raise HTTPException(status_code=400, detail="`model_name` must be provided.")
-    
+
     logger.info(f"Received list files request for model: '{model_name}'")
-    
+
     try:
         # Fetch model information using Hugging Face Hub API
         logger.info(f"Fetching model info for '{model_name}' using Hugging Face API.")
-        info = await asyncio.to_thread(fetch_model_info, model_name, api_key)
-        
+        info = await asyncio.to_thread(fetch_model_info, model_name, effective_api_key)
+
         if not hasattr(info, 'siblings'):
             error_msg = "ModelInfo object has no attribute 'siblings'"
             logger.error(f"{error_msg} for model '{model_name}'")
             raise AttributeError(error_msg)
-        
+
         files_info = []
         logger.info(f"Processing sibling files for model '{model_name}'.")
-        
+
         for file in info.siblings:
             filename = file.rfilename
             if not filename:
                 logger.info("Skipping file with no filename.")
                 continue
-            
+
             # **Filter Out Non-Root Files**
             if '/' in filename or '\\' in filename:
                 logger.info(f"Skipping non-root file: '{filename}'")
                 continue
-            
+
             download_url = hf_hub_url(
                 repo_id=model_name,
                 filename=filename
                 # revision=default_branch  # Uncomment if you use revision
             )
-            
+
             if getattr(file, 'size', None) is not None:
                 formatted_size = format_size(file.size)
                 logger.info(f"File '{filename}' has size {formatted_size}.")
             else:
-                size_bytes = await get_file_size_via_head(download_url, api_key)
+                size_bytes = await get_file_size_via_head(download_url, effective_api_key)
                 if size_bytes is not None:
                     formatted_size = format_size(size_bytes)
                 else:
-                    size_bytes = await get_file_size_via_get(download_url, api_key)
+                    size_bytes = await get_file_size_via_get(download_url, effective_api_key)
                     if size_bytes is not None:
                         formatted_size = format_size(size_bytes)
                     else:
                         formatted_size = "Unknown"
                         logger.warning(f"Could not determine size for file '{filename}'.")
-            
+
             files_info.append(
                 ModelFileInfo(
                     file_name=filename,
@@ -174,10 +174,10 @@ async def list_model_files_endpoint(
                     download_url=download_url
                 )
             )
-        
+
         logger.info(f"Retrieved {len(files_info)} root files from model '{model_name}'.")
         return ListModelFilesResponse(files=files_info)
-    
+
     except AttributeError as ae:
         error_message = f"Error accessing model files: {str(ae)}"
         logger.error(f"AttributeError: {error_message}")
@@ -230,7 +230,7 @@ async def list_model_files_endpoint(
 async def list_models() -> List[ModelInfo]:
     """List all downloaded models along with their types, sizes, properties, and mounted files."""
     
-    logger.info('GET /list_models/ - Listing all downloaded models.')
+    logger.info('GET /v1/models/ - Listing all downloaded models.')
     models_info = []
     try:
         model_dirs = [
@@ -326,19 +326,21 @@ async def list_models() -> List[ModelInfo]:
 )
 async def download_model_endpoint(
     request: DownloadModelRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    api_key: Optional[str] = Header(None, description="Hugging Face API key") 
 ) -> dict:
     client_id = request.client_id
     model_name = request.model_name
-    api_key = request.api_key if request.api_key else config.HUGGINGFACE_TOKEN 
+    # Use the API key from headers; fallback to config if needed
+    effective_api_key = api_key if api_key else config.HUGGINGFACE_TOKEN
     files_to_download = request.files_to_download
-   
-    logger.info('POST /download_model/')
 
+    logger.info('POST /v1/model/download')
     logger.info(
         f"Received download request from client_id: {client_id} "
         f"for model: {model_name} with files: {files_to_download}"
     )
+
     # Check if the client has an active download
     if model_states.get(client_id, {}).get("is_downloading"):
         logger.warning(f"Client {client_id} already has an active download.")
@@ -346,6 +348,7 @@ async def download_model_endpoint(
             status_code=400,
             detail="A download is currently in progress for this client."
         )
+
     # Initialize the model state for this client
     model_states[client_id] = {
         "is_downloading": True,
@@ -357,18 +360,21 @@ async def download_model_endpoint(
             "files": []
         }
     }
+
     # Create the download directory if it doesn't exist
     os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
     logger.info(f"Download directory ensured at {config.DOWNLOAD_DIRECTORY}")
+
     # Start the download in a background task, passing the list of files
     background_tasks.add_task(
         download_model,
-        client_id,
-        model_name,
-        api_key,
-        files_to_download
+        client_id=client_id,
+        model_name=model_name,
+        api_key=effective_api_key,
+        files_to_download=files_to_download
     )
     logger.info(f"Download initiated for client {client_id}.")
+
     return {
         "status": "Download started.",
         "message": f"Model '{model_name}' is being downloaded."
@@ -789,7 +795,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 async def mount_model(request: MountModelRequest) -> dict:
     """Mount the specified model."""
     
-    logger.info("POST /mount_model/ - Mount model request received.")
+    logger.info("POST /v1/model/mount - Mount model request received.")
     model_name = request.model_name
     properties = request.properties or {}
     specified_file_name = request.file_name
@@ -963,7 +969,7 @@ async def mount_model(request: MountModelRequest) -> dict:
 async def unmount_model(request: ModelRequest) -> dict:
     """Unmounts the specified model and frees up resources."""
     
-    logger.info("POST /unmount_model/ - Unmount model request received.")
+    logger.info("POST /v1/model/unmount - Unmount model request received.")
     model_name = request.model_name
     logger.info(f"Model to unmount: {model_name}")
     model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
@@ -999,25 +1005,42 @@ async def unmount_model(request: ModelRequest) -> dict:
     
     return {"message": f"Model '{model_name}' unmounted successfully."}
 
-@router.delete("/model/delete",
-            summary="Delete Local Model",
-            description="Delete the local files of a previously mounted model based on the model name.",
-            response_model=dict,
-            responses={200: {"content": {"application/json": {"example": {"message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."}}}}})
-async def delete_model(request: ModelRequest) -> dict:
-    """Delete a previously mounted model and its resources."""
-    
-    logger.info("DELETE /delete_model/ - Initiated deletion process.")
-    model_name = request.model_name
+@router.delete(
+    "/model/delete",
+    summary="Delete Local Model",
+    description="Delete the local files of a previously mounted model based on the model name.",
+    response_model=DeleteModelResponse,
+    status_code=200,
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {"message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."}
+                }
+            },
+            "description": "Model deleted successfully.",
+        },
+        404: {"description": "Model not found."},
+        500: {"description": "Internal server error during deletion."},
+    },
+)
+async def delete_model(
+    model_name: str = Query(..., description="Name of the Hugging Face model repository"),
+) -> DeleteModelResponse:
+    """
+    Delete a previously mounted model and its resources based on the provided `model_name`.
+    """
+    logger.info(f"DELETE /v1/model/delete - Initiated deletion process for model '{model_name}'.")
 
-    # Find the model in the global models list
-    model_to_delete = next((model for model in model_state.models if model.model_name == model_name), None)
+    model_to_delete = next(
+        (model for model in model_state.models if model.model_name == model_name), None
+    )
     if model_to_delete:
         logger.info(f"Model '{model_name}' is currently mounted. Attempting to unmount before deletion.")
         try:
             # Unmount the model first to free resources
-            if model_state.device == 'cuda' and model_to_delete.model.device.type == 'cuda':
-                model_to_delete.model.cpu() # Move model to CPU to free GPU memory
+            if model_state.device == 'cuda' and hasattr(model_to_delete.model, 'device') and model_to_delete.model.device.type == 'cuda':
+                model_to_delete.model.cpu()  # Move model to CPU to free GPU memory
                 torch.cuda.empty_cache()
                 logger.info(f"Model '{model_name}' moved to CPU and GPU cache cleared.")
             
@@ -1031,15 +1054,17 @@ async def delete_model(request: ModelRequest) -> dict:
             del model_to_delete.pipeline
             logger.info(f"Resources for model '{model_name}' have been released.")
             
-            import gc
             gc.collect()
             logger.info("Garbage collector invoked to free up memory.")
         
         except Exception as e:
             logger.error(f"Error unmounting model '{model_name}' before deletion: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error unmounting model before deletion: {str(e)}")
-    
-    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
+    else:
+        logger.info(f"Model '{model_name}' is not currently mounted.")
+
+    sanitized_model_name = model_name.replace('/', '--')
+    model_path = os.path.join(config.DOWNLOAD_DIRECTORY, sanitized_model_name)
     logger.info(f"Resolved model path: {model_path}")
 
     # Check if the model path exists
@@ -1055,7 +1080,7 @@ async def delete_model(request: ModelRequest) -> dict:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, shutil.rmtree, model_path)
         logger.info(f"Model directory '{model_path}' and its contents have been deleted successfully.")
-        return {"message": f"Model '{model_name}' has been deleted successfully."}
+        return DeleteModelResponse(message=f"Model '{model_name}' has been deleted successfully.")
     except Exception as e:
         logger.error(f"An error occurred while deleting the model '{model_name}': {str(e)}")
         raise HTTPException(
@@ -1355,7 +1380,8 @@ async def chat_completions(chat_request: ChatCompletionRequest) -> ChatCompletio
 )
 async def get_model_info(
     model_name: str = Query(..., description="The name of the Hugging Face model"),
-    return_type: str = Query(default="info", description="Specify 'config' to retrieve model configuration or 'info' to retrieve model information.")
+    return_type: str = Query(default="info", description="Specify 'config' to retrieve model configuration or 'info' to retrieve model information."),
+    api_key: Optional[str] = Header(None, description="Hugging Face API key")
 ):
     """
     Retrieve either model configuration or model information from HfApi.
@@ -1368,7 +1394,9 @@ async def get_model_info(
     - Model configuration or model information.
     """
 
-    logger.info('GET /model_info/ - request received.')
+    logger.info('GET /v1/model/info - request received.')
+
+    effective_api_key = api_key if api_key else config.HUGGINGFACE_TOKEN
 
     if return_type not in ["config", "info"]:
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
@@ -1424,9 +1452,8 @@ async def get_model_info(
                     )
         
         else: 
-            api = HfApi()
-            model_info = api.model_info(model_name)
-            
+            model_info = await asyncio.to_thread(fetch_model_info, model_name, api_key=effective_api_key)
+           
             info_dict = {
                 "model_id": model_info.modelId,
                 "pipeline_tag": model_info.pipeline_tag,
@@ -1467,7 +1494,7 @@ async def fine_tune(
     Initiates the fine-tuning of a pretrained translation model based on the provided parameters.
     The fine-tuning process runs in the background and sends progress updates via WebSocket.
     """
-    logger.info('POST /fine-tune/ - request received.')
+    logger.info('POST /v1/model/fine-tune/ - request received.')
 
     # Validate that the client_id is connected
     if request.client_id not in manager.active_connections:

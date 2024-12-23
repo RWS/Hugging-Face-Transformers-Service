@@ -1,3 +1,4 @@
+from fastapi import Header, HTTPException
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 import os
 import sys
@@ -137,7 +138,15 @@ def extract_assistant_response(response):
     # Fallback: return the entire response as string if expected keys are missing
     return str(response)
 
-
+# async def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
+#     """
+#     Dependency to retrieve the API key from the headers.
+#     Raises HTTPException if API key is missing.
+#     """
+#     if not x_api_key:
+#         logger.warning("API key missing in headers.")
+#         raise HTTPException(status_code=400, detail="API key missing in headers.")
+#     return x_api_key
 
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
@@ -274,7 +283,7 @@ def fetch_model_info(model_name: str, api_key: str):
     logger.info(f"Fetching model info for '{model_name}' with API key provided.")
     api = HfApi()
     try:
-        model_info = api.model_info(repo_id=model_name, token=api_key or os.getenv("HUGGINGFACE_TOKEN"))
+        model_info = api.model_info(repo_id=model_name, token=api_key)
         logger.debug(f"Fetched model info for '{model_name}': {model_info}")
         return model_info
     except Exception as e:

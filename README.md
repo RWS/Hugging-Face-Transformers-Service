@@ -52,6 +52,7 @@ Enable users to **fine-tune pretrained translation models** with their own datas
     "client_id": "unique_client_id_123",
     "model_path": "/path/to/pretrained/model",
     "output_dir": "/path/to/save/fine-tuned/model",
+    "validation_file": "/path/to/validation_data.csv",
     "data_file": "/path/to/data.csv",
     "source_lang": "en_XX",
     "target_lang": "it_IT",
@@ -206,18 +207,19 @@ HuggingFace-TS.exe
 
 ## API Endpoints
 
-- `GET /list_models/`: Retrieve a list of all downloaded models from the `HUGGINGFACE_MODELS_DIR` directory, including their names and types.
-- `GET /model_info/`: Retrieve model information, including configuration details and types supported.
-- `POST /download_directory/`: Retrieves the current download directory, including the `model_name` if provided and not empty.
-- `POST /list_model_files/`: Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available.
-- `POST /download_model/`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
-- `WS /ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
-- `DEL /delete_model/`: Delete the local files of a previously mounted model based on the model name
-- `POST /mount_model/`: Mount the specified model and setup the appropriate pipeline.
-- `POST /unmount_model/`: Unmount the currently mounted model to free up resources.
-- `POST /translate/`: Translate input text using the mounted translation model.
-- `POST /generate/`: Generate text based on the input prompt using the mounted text generation model..
-- `POST /fine-tune/`: Initiate the fine-tuning of a specified translation model with custom parameters and data. Receive real-time progress updates via WebSocket.
+- `GET /v1/models`: Retrieve a list of all downloaded models from the `HUGGINGFACE_MODELS_DIR` directory, including their names and types.
+- `GET /v1/model/info`: Retrieve model information, including configuration details and types supported.
+- `GET /v1/model/directory`: Retrieves the current download directory, including the `model_name` if provided and not empty.
+- `GET /v1/model/files`: Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available.
+- `POST /v1/model/download`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
+- `DEL /v1/model/delete`: Delete the local files of a previously mounted model based on the model name
+- `POST /v1/model/mount/`: Mount the specified model and setup the appropriate pipeline.
+- `POST /v1/model/unmuont`: Unmount the currently mounted model to free up resources.
+- `POST /v1/model/fine-tune`: Initiate the fine-tuning of a specified translation model with custom parameters and data. Receive real-time progress updates via WebSocket.
+- `POST /v1/translate`: Translate input text using the mounted translation model.
+- `POST /v1/completions`: Generate text based on the input prompt using the specified text generation model.
+- `POST /v1/chat/completions`: Generate chat-style completion using the specified text generation model. model..
+- `WS /v1/ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
 
 ### Notes
 

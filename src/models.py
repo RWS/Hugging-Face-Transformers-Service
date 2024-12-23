@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, model_validator
-from typing import Union, List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
 
 
 class TranslationRequest(BaseModel):
@@ -110,12 +110,8 @@ class ChatCompletionRequest(BaseModel):
         }
 
 
-
-
-
-
 class MountModelRequest(BaseModel):
-    model_name: str = Field(...,description="The Hugging Face model name."
+    model_name: str = Field(..., description="The Hugging Face model name."
     )
     properties: Optional[Dict[str, str]] = Field(
         default=None,
@@ -138,15 +134,6 @@ class MountModelRequest(BaseModel):
         }
 
 
-
-
-
-class ListModelFilesRequest(BaseModel):
-    model_name: str = Field(..., description="The Hugging Face model repository name, e.g., 'username/model-name'")
-    api_key: Optional[str] = Field(None, description="Your Hugging Face API token if accessing private repositories.")
-    class Config:    
-        protected_namespaces = ()          
-
 class ModelFileInfo(BaseModel):
     file_name: str
     file_size: Optional[str] = None  # Human-readable file size
@@ -157,13 +144,21 @@ class ModelFileInfo(BaseModel):
 class ListModelFilesResponse(BaseModel):
     files: List[ModelFileInfo]
     class Config:    
-        protected_namespaces = ()     
+        protected_namespaces = ()  
+
+class DeleteModelResponse(BaseModel):
+    message: str = Field(..., 
+                         description="Confirmation message indicating successful deletion of the model.")
+    class Config:    
+        protected_namespaces = ()  
 
 class DownloadModelRequest(BaseModel):
     client_id: str = Field(..., description="Unique identifier for the client")
     model_name: str = Field(..., description="The Hugging Face model repository name")
-    api_key: Optional[str] = Field(None, description="Your Hugging Face API token if accessing private repositories.")
-    files_to_download: Optional[List[str]] = Field(None, description="List of specific files to download. If not provided, all files will be downloaded.")
+    files_to_download: Optional[List[str]] = Field(
+        None, description="List of specific files to download. If not provided, all files will be downloaded."
+    )
+
     class Config:
         protected_namespaces = ()
         json_schema_extra = {
@@ -173,8 +168,8 @@ class DownloadModelRequest(BaseModel):
                     "value": {
                         "client_id": "unique_client_id_123",
                         "model_name": "facebook/nllb-200-distilled-600M",
-                        "files_to_download": ["pytorch_model.bin","tokenizer.json","config.json","README.md"]
-                    }
+                        "files_to_download": ["pytorch_model.bin", "tokenizer.json", "config.json", "README.md"],
+                    },
                 }
             ]
         }
@@ -198,7 +193,6 @@ class ModelInfo(BaseModel):
     properties: Dict[str, str]
     file_names: Optional[List[str]] = None  # lsit of *.gguf files
     loaded_file_name: Optional[str] = None  # to identify the loaded gguf file
-
     class Config:
         protected_namespaces = ()  
 
@@ -220,7 +214,6 @@ class LocalModel:
         self.pipeline = pipeline
         self.properties = properties or {}
         self.file_name = file_name 
-
     class Config:
         protected_namespaces = ()
 
@@ -230,16 +223,9 @@ class ModelInfoResponse(BaseModel):
     message: Optional[str] = None
     minimal_info: Optional[dict] = None
     info: Optional[dict] = None
-
     class Config:
         protected_namespaces = ()
-
-
-class DownloadDirectoryRequest(BaseModel):
-    model_name: Optional[str] = None
-    class Config:
-        protected_namespaces = ()    
-
+   
 class DownloadDirectoryResponse(BaseModel):
     path: str 
     class Config:

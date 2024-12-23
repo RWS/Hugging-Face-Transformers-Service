@@ -3,24 +3,27 @@
   "info": {
     "title": "Hugging Face Transformers Service",
     "description": "This **Local LLM server** application is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
-    "version": "1.0.8"
+    "version": "1.0.9"
   },
   "paths": {
-    "/download_directory": {
-      "post": {
+    "/v1/model/directory": {
+      "get": {
         "summary": "Get Download Path",
         "description": "Retrieve the current download directory.\nIf `model_name` is provided and not empty, include it in the path.",
-        "operationId": "get_download_path_download_directory_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DownloadDirectoryRequest"
-              }
-            }
-          },
-          "required": true
-        },
+        "operationId": "get_download_path_v1_model_directory_get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Name of the model to include in the path",
+              "title": "Model Name"
+            },
+            "description": "Name of the model to include in the path"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -45,21 +48,42 @@
         }
       }
     },
-    "/list_model_files/": {
-      "post": {
+    "/v1/model/files": {
+      "get": {
         "summary": "List Model Files",
         "description": "Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available. Only files in the root directory are listed.",
-        "operationId": "list_model_files_endpoint_list_model_files__post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ListModelFilesRequest"
-              }
-            }
+        "operationId": "list_model_files_endpoint_v1_model_files_get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Name of the Hugging Face model repository",
+              "title": "Model Name"
+            },
+            "description": "Name of the Hugging Face model repository"
           },
-          "required": true
-        },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Hugging Face API key",
+              "title": "Api-Key"
+            },
+            "description": "Hugging Face API key"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful retrieval of model files.",
@@ -104,11 +128,11 @@
         }
       }
     },
-    "/list_models/": {
+    "/v1/models": {
       "get": {
         "summary": "List downloaded models",
         "description": "List all downloaded models along with their types, sizes, properties, and mounted files.",
-        "operationId": "list_models_list_models__get",
+        "operationId": "list_models_v1_models_get",
         "responses": {
           "200": {
             "description": "A list of models available in the cache.",
@@ -119,7 +143,7 @@
                     "$ref": "#/components/schemas/ModelInfo"
                   },
                   "type": "array",
-                  "title": "Response List Models List Models  Get"
+                  "title": "Response List Models V1 Models Get"
                 },
                 "example": [
                   {
@@ -151,20 +175,40 @@
         }
       }
     },
-    "/download_model/": {
+    "/v1/model/download": {
       "post": {
         "summary": "Download a Model",
         "description": "Initiates the download of a specified model from the Hugging Face Hub. If the model is already downloaded, it overwrites existing files. Users can specify which files to download. If no files are specified, all files from the model will be downloaded.",
-        "operationId": "download_model_endpoint_download_model__post",
+        "operationId": "download_model_endpoint_v1_model_download_post",
+        "parameters": [
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Hugging Face API key",
+              "title": "Api-Key"
+            },
+            "description": "Hugging Face API key"
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/DownloadModelRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -173,7 +217,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "title": "Response Download Model Endpoint Download Model  Post"
+                  "title": "Response Download Model Endpoint V1 Model Download Post"
                 },
                 "example": {
                   "status": "Download started.",
@@ -198,11 +242,11 @@
         }
       }
     },
-    "/mount_model/": {
+    "/v1/model/mount": {
       "post": {
         "summary": "Mount a Model",
         "description": "Mount the specified model and setup the appropriate pipeline. Supported model types: 'translation', 'text-generation'.",
-        "operationId": "mount_model_mount_model__post",
+        "operationId": "mount_model_v1_model_mount_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -220,7 +264,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "title": "Response Mount Model Mount Model  Post"
+                  "title": "Response Mount Model V1 Model Mount Post"
                 },
                 "example": {
                   "message": "Model 'facebook/nllb-200-distilled-600M' of type 'translation' mounted successfully.",
@@ -265,11 +309,11 @@
         }
       }
     },
-    "/unmount_model/": {
+    "/v1/model/unmount": {
       "post": {
         "summary": "Unmount Model",
         "description": "Unmount the mounted model to free up resources.",
-        "operationId": "unmount_model_unmount_model__post",
+        "operationId": "unmount_model_v1_model_unmount_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -287,7 +331,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "title": "Response Unmount Model Unmount Model  Post"
+                  "title": "Response Unmount Model V1 Model Unmount Post"
                 },
                 "example": {
                   "message": "Model unmounted successfully."
@@ -308,35 +352,43 @@
         }
       }
     },
-    "/delete_model/": {
+    "/v1/model/delete": {
       "delete": {
         "summary": "Delete Local Model",
         "description": "Delete the local files of a previously mounted model based on the model name.",
-        "operationId": "delete_model_delete_model__delete",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelRequest"
-              }
-            }
-          },
-          "required": true
-        },
+        "operationId": "delete_model_v1_model_delete_delete",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Name of the Hugging Face model repository",
+              "title": "Model Name"
+            },
+            "description": "Name of the Hugging Face model repository"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Model deleted successfully.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "title": "Response Delete Model Delete Model  Delete"
+                  "$ref": "#/components/schemas/DeleteModelResponse"
                 },
                 "example": {
                   "message": "Model 'facebook/nllb-200-distilled-600M' has been deleted successfully."
                 }
               }
             }
+          },
+          "404": {
+            "description": "Model not found."
+          },
+          "500": {
+            "description": "Internal server error during deletion."
           },
           "422": {
             "description": "Validation Error",
@@ -351,11 +403,11 @@
         }
       }
     },
-    "/translate/": {
+    "/v1/translation": {
       "post": {
         "summary": "Translate Text",
         "description": "Translate input text using the specified translation model.",
-        "operationId": "translate_translate__post",
+        "operationId": "translate_v1_translation_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -390,16 +442,16 @@
         }
       }
     },
-    "/generate/": {
+    "/v1/completions": {
       "post": {
-        "summary": "Generate Text",
+        "summary": "Generate Text Completion",
         "description": "Generate text based on the input prompt using the specified text generation model.",
-        "operationId": "generate_generate__post",
+        "operationId": "completions_v1_completions_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TextGenerationRequest"
+                "$ref": "#/components/schemas/CompletionRequest"
               }
             }
           },
@@ -411,7 +463,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GeneratedResponse"
+                  "$ref": "#/components/schemas/CompletionResponse"
                 }
               }
             }
@@ -429,11 +481,50 @@
         }
       }
     },
-    "/model_info/": {
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "Generate Chat Completion",
+        "description": "Generate chat-style completion using the specified text generation model.",
+        "operationId": "chat_completions_v1_chat_completions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/model/info": {
       "get": {
         "summary": "Retrieve model info",
         "description": "Retrieve either model configuration or model information.",
-        "operationId": "get_model_info_model_info__get",
+        "operationId": "get_model_info_v1_model_info_get",
         "parameters": [
           {
             "name": "model_name",
@@ -457,6 +548,24 @@
               "title": "Return Type"
             },
             "description": "Specify 'config' to retrieve model configuration or 'info' to retrieve model information."
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Hugging Face API key",
+              "title": "Api-Key"
+            },
+            "description": "Hugging Face API key"
           }
         ],
         "responses": {
@@ -483,11 +592,11 @@
         }
       }
     },
-    "/fine-tune/": {
+    "/v1/model/fine-tune": {
       "post": {
         "summary": "Fine-Tune a Pretrained Translation Model",
         "description": "Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.",
-        "operationId": "fine_tune_fine_tune__post",
+        "operationId": "fine_tune_v1_model_fine_tune_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -523,9 +632,16 @@
   },
   "components": {
     "schemas": {
-      "DownloadDirectoryRequest": {
+      "ChatCompletionChoice": {
         "properties": {
-          "model_name": {
+          "message": {
+            "$ref": "#/components/schemas/ChatMessage"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "finish_reason": {
             "anyOf": [
               {
                 "type": "string"
@@ -534,11 +650,384 @@
                 "type": "null"
               }
             ],
-            "title": "Model Name"
+            "title": "Finish Reason"
           }
         },
         "type": "object",
-        "title": "DownloadDirectoryRequest"
+        "required": [
+          "message",
+          "index"
+        ],
+        "title": "ChatCompletionChoice"
+      },
+      "ChatCompletionRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "Name of the chat model to use."
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "type": "array",
+            "title": "Messages",
+            "description": "List of messages in the conversation."
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens",
+            "description": "Maximum number of tokens to generate.",
+            "default": 500
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "Sampling temperature.",
+            "default": 0.7
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P",
+            "description": "Nucleus sampling probability.",
+            "default": 1.0
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N",
+            "description": "Number of completions to generate.",
+            "default": 1
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop",
+            "description": "Sequences where the API will stop generating further tokens."
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name",
+          "messages"
+        ],
+        "title": "ChatCompletionRequest",
+        "example": {
+          "max_tokens": 100,
+          "messages": [
+            {
+              "content": "You are a helpful assistant.",
+              "role": "system"
+            },
+            {
+              "content": "Tell me a joke.",
+              "role": "user"
+            }
+          ],
+          "model_name": "gpt-4",
+          "n": 1,
+          "temperature": 0.7,
+          "top_p": 1.0
+        }
+      },
+      "ChatCompletionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "object": {
+            "type": "string",
+            "title": "Object"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/ChatCompletionChoice"
+            },
+            "type": "array",
+            "title": "Choices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "model",
+          "choices"
+        ],
+        "title": "ChatCompletionResponse"
+      },
+      "ChatMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "Role of the message sender (e.g., 'user', 'assistant')."
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Content of the message."
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatMessage"
+      },
+      "CompletionChoice": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "logprobs": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logprobs"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "index"
+        ],
+        "title": "CompletionChoice"
+      },
+      "CompletionRequest": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "Name of the text generation model to use."
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt",
+            "description": "The input text prompt for text generation."
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens",
+            "description": "Maximum number of tokens to generate.",
+            "default": 500
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "Sampling temperature.",
+            "default": 0.7
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P",
+            "description": "Nucleus sampling probability.",
+            "default": 1.0
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N",
+            "description": "Number of completions to generate.",
+            "default": 1
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop",
+            "description": "Sequences where the API will stop generating further tokens."
+          },
+          "echo": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Echo",
+            "description": "Whether to echo the prompt in the completion.",
+            "default": false
+          },
+          "best_of": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Of",
+            "description": "Generates `best_of` completions server-side and returns the best.",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_name",
+          "prompt"
+        ],
+        "title": "CompletionRequest",
+        "example": {
+          "best_of": 1,
+          "echo": false,
+          "max_tokens": 50,
+          "model_name": "gpt-3.5-turbo",
+          "n": 1,
+          "prompt": "Once upon a time,",
+          "stop": [
+            "\n"
+          ],
+          "temperature": 0.7,
+          "top_p": 1.0
+        }
+      },
+      "CompletionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "object": {
+            "type": "string",
+            "title": "Object"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/CompletionChoice"
+            },
+            "type": "array",
+            "title": "Choices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "model",
+          "choices"
+        ],
+        "title": "CompletionResponse"
+      },
+      "DeleteModelResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Confirmation message indicating successful deletion of the model."
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "DeleteModelResponse"
       },
       "DownloadDirectoryResponse": {
         "properties": {
@@ -564,18 +1053,6 @@
             "type": "string",
             "title": "Model Name",
             "description": "The Hugging Face model repository name"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key",
-            "description": "Your Hugging Face API token if accessing private repositories."
           },
           "files_to_download": {
             "anyOf": [
@@ -805,20 +1282,8 @@
       "GeneratedResponse": {
         "properties": {
           "generated_response": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "items": {
-                  "type": "object"
-                },
-                "type": "array"
-              }
-            ],
-            "title": "Generated Response",
-            "description": "The generated text from the model based on the provided prompt. It can be either a string (when 'assistant' response is requested) or a list of dictionaries containing raw response data.",
-            "example": "Il gatto \u00e8 sul tavolo."
+            "type": "string",
+            "title": "Generated Response"
           }
         },
         "type": "object",
@@ -839,32 +1304,6 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
-      },
-      "ListModelFilesRequest": {
-        "properties": {
-          "model_name": {
-            "type": "string",
-            "title": "Model Name",
-            "description": "The Hugging Face model repository name, e.g., 'username/model-name'"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key",
-            "description": "Your Hugging Face API token if accessing private repositories."
-          }
-        },
-        "type": "object",
-        "required": [
-          "model_name"
-        ],
-        "title": "ListModelFilesRequest"
       },
       "ListModelFilesResponse": {
         "properties": {
@@ -1099,99 +1538,6 @@
             "tgt_lang": "ita_Latn"
           }
         }
-      },
-      "TextGenerationRequest": {
-        "properties": {
-          "model_name": {
-            "type": "string",
-            "title": "Model Name",
-            "description": "The name of the text generation model to use."
-          },
-          "prompt": {
-            "anyOf": [
-              {
-                "items": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt",
-            "description": "The User Prompt comprised of custom instructions provided by the user.\nShould be a list of messages with roles like 'system', 'user', and 'assistant'."
-          },
-          "prompt_plain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Plain",
-            "description": "A plain text prompt for models that do not use message-based inputs."
-          },
-          "max_tokens": {
-            "type": "integer",
-            "title": "Max Tokens",
-            "description": "The maximum number of tokens to generate.",
-            "default": 250
-          },
-          "temperature": {
-            "type": "number",
-            "title": "Temperature",
-            "description": "Sampling temperature for generation.",
-            "default": 1.0
-          },
-          "result_type": {
-            "type": "string",
-            "title": "Result Type",
-            "description": "Indicates the response type: 'raw' or 'assistant'.",
-            "default": "assistant"
-          }
-        },
-        "type": "object",
-        "required": [
-          "model_name"
-        ],
-        "title": "TextGenerationRequest",
-        "examples": [
-          {
-            "summary": "Chat-like prompt for GPT-4",
-            "value": {
-              "max_tokens": 100,
-              "model_name": "gpt-4",
-              "prompt": [
-                {
-                  "content": "You are a helpful assistant.",
-                  "role": "system"
-                },
-                {
-                  "content": "Generate a response to this prompt.",
-                  "role": "user"
-                }
-              ],
-              "result_type": "assistant",
-              "temperature": 1.0
-            }
-          },
-          {
-            "summary": "Plain text prompt for XGLM",
-            "value": {
-              "max_tokens": 100,
-              "model_name": "facebook/xglm-7.5B",
-              "prompt_plain": "Translate the following English sentence to French: 'I love programming.'",
-              "result_type": "assistant",
-              "temperature": 0.7
-            }
-          }
-        ]
       },
       "TranslationRequest": {
         "properties": {
