@@ -23,7 +23,7 @@ Below is an overview of the supported models categorized by their primary functi
 
 | **Model Name**                               | **Primary Uses**                                                                                                               | **Supported Languages**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **Notes**                                                                                                                                                     |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **facebook/nllb-200-distilled-600M**         | Machine translation research, especially for low-resource languages. Supports single-sentence translation among 200 languages. | eng_Latn, ita_Latn, deu_Latn, fra_Latn, spa_Latn, ell_Grek, jpn_Jpan, zho_Hans, zho_Hant, etc.… [Full list in [README](#supported-languages)]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Trained with input lengths not exceeding 512 tokens; translating longer sequences may degrade quality. Translations cannot be used as certified translations. |
+| **facebook/nllb-200-distilled-600M**         | Machine translation research, especially for low-resource languages. Supports single-sentence translation among 200 languages. | eng_Latn, ita_Latn, deu_Latn, fra_Latn, spa_Latn, ell_Grek, jpn_Jpan, zho_Hans, zho_Hant, etc.… [Full list in [README](https://huggingface.co/facebook/nllb-200-distilled-600M/blob/main/README.md)]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Trained with input lengths not exceeding 512 tokens; translating longer sequences may degrade quality. Translations cannot be used as certified translations. |
 | **facebook/mbart-large-50-many-to-many-mmt** | Multilingual machine translation. Enables direct translation between any pair of 50 languages.                                 | Arabic (ar_AR), Czech (cs_CZ), German (de_DE), English (en_XX), Spanish (es_XX), Estonian (et_EE), Finnish (fi_FI), French (fr_XX), Gujarati (gu_IN), Hindi (hi_IN), Italian (it_IT), Japanese (ja_XX), Kazakh (kk_KZ), Korean (ko_KR), Lithuanian (lt_LT), Latvian (lv_LV), Burmese (my_MM), Nepali (ne_NP), Dutch (nl_XX), Romanian (ro_RO), Russian (ru_RU), Sinhala (si_LK), Turkish (tr_TR), Vietnamese (vi_VN), Chinese (zh_CN), Afrikaans (af_ZA), Azerbaijani (az_AZ), Bengali (bn_IN), Persian (fa_IR), Hebrew (he_IL), Croatian (hr_HR), Indonesian (id_ID), Georgian (ka_GE), Khmer (km_KH), Macedonian (mk_MK), Malayalam (ml_IN), Mongolian (mn_MN), Marathi (mr_IN), Polish (pl_PL), Pashto (ps_AF), Portuguese (pt_XX), Swedish (sv_SE), Swahili (sw_KE), Tamil (ta_IN), Telugu (te_IN), Thai (th_TH), Tagalog (tl_XX), Ukrainian (uk_UA), Urdu (ur_PK), Xhosa (xh_ZA), Galician (gl_ES), Slovene (sl_SI) |
 | **Helsinki-NLP/opus-mt-\***                  | Various language pair translations. Offers a wide range of language directions.                                                | Varies per model (e.g., en-it, it-en, en-fr, fr-en, en-de, de-en, etc.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Helsinki-NLP is focused on wide language coverage, open datasets, and public pre-trained models.                                                              |
 
@@ -56,25 +56,27 @@ Enable users to **fine-tune pretrained translation models** with their own datas
 #### Example Usage
 
 - **Initiate Fine-Tuning**:
-    `json
-  {
-    "client_id": "unique_client_id_123",
-    "model_path": "/path/to/pretrained/model",
-    "output_dir": "/path/to/save/fine-tuned/model",
-    "validation_file": "/path/to/validation_data.csv",
-    "data_file": "/path/to/data.csv",
-    "source_lang": "en_XX",
-    "target_lang": "it_IT",
-    "num_train_epochs": 4,
-    "per_device_train_batch_size": 2,
-    "per_device_eval_batch_size": 2,
-    "learning_rate": 3e-5,
-    "weight_decay": 0.01,
-    "max_length": 512,
-    "save_steps": 10,
-    "save_total_limit": 2
-  }
-  `
+
+```json
+{
+  "client_id": "unique_client_id_123",
+  "model_path": "/path/to/pretrained/model",
+  "output_dir": "/path/to/save/fine-tuned/model",
+  "validation_file": "/path/to/validation_data.csv",
+  "data_file": "/path/to/data.csv",
+  "source_lang": "en_XX",
+  "target_lang": "it_IT",
+  "num_train_epochs": 4,
+  "per_device_train_batch_size": 2,
+  "per_device_eval_batch_size": 2,
+  "learning_rate": 3e-5,
+  "weight_decay": 0.01,
+  "max_length": 512,
+  "save_steps": 10,
+  "save_total_limit": 2
+}
+```
+
 - **Establish WebSocket Connection**:
     Connect to `/ws/progress/unique_client_id_123` to receive real-time updates during the fine-tuning process.
 
