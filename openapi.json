@@ -424,7 +424,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GeneratedResponse"
+                  "$ref": "#/components/schemas/TranslationResponse"
                 }
               }
             }
@@ -741,6 +741,11 @@
             ],
             "title": "Stop",
             "description": "Sequences where the API will stop generating further tokens."
+          },
+          "response_type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "description": "Type of response: 'choices' or 'assistant'.",
+            "default": "choices"
           }
         },
         "type": "object",
@@ -763,6 +768,7 @@
           ],
           "model_name": "gpt-4",
           "n": 1,
+          "response_type": "choices",
           "temperature": 0.7,
           "top_p": 1.0
         }
@@ -782,19 +788,36 @@
             "title": "Model"
           },
           "choices": {
-            "items": {
-              "$ref": "#/components/schemas/ChatCompletionChoice"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChatCompletionChoice"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Choices"
+          },
+          "generated_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Text"
           }
         },
         "type": "object",
         "required": [
           "id",
           "object",
-          "model",
-          "choices"
+          "model"
         ],
         "title": "ChatCompletionResponse"
       },
@@ -962,6 +985,11 @@
             "title": "Best Of",
             "description": "Generates `best_of` completions server-side and returns the best.",
             "default": 1
+          },
+          "response_type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "description": "Type of response: 'choices' or 'assistant'.",
+            "default": "choices"
           }
         },
         "type": "object",
@@ -977,6 +1005,7 @@
           "model_name": "gpt-3.5-turbo",
           "n": 1,
           "prompt": "Once upon a time,",
+          "response_type": "choices",
           "stop": [
             "\n"
           ],
@@ -999,19 +1028,36 @@
             "title": "Model"
           },
           "choices": {
-            "items": {
-              "$ref": "#/components/schemas/CompletionChoice"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompletionChoice"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Choices"
+          },
+          "generated_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Text"
           }
         },
         "type": "object",
         "required": [
           "id",
           "object",
-          "model",
-          "choices"
+          "model"
         ],
         "title": "CompletionResponse"
       },
@@ -1279,19 +1325,6 @@
           "weight_decay": 0.01
         }
       },
-      "GeneratedResponse": {
-        "properties": {
-          "generated_response": {
-            "type": "string",
-            "title": "Generated Response"
-          }
-        },
-        "type": "object",
-        "required": [
-          "generated_response"
-        ],
-        "title": "GeneratedResponse"
-      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1539,6 +1572,14 @@
           }
         }
       },
+      "ResponseType": {
+        "type": "string",
+        "enum": [
+          "choices",
+          "assistant"
+        ],
+        "title": "ResponseType"
+      },
       "TranslationRequest": {
         "properties": {
           "model_name": {
@@ -1562,6 +1603,34 @@
           "model_name": "facebook/nllb-200-distilled-600M",
           "text": "The cat is on the table."
         }
+      },
+      "TranslationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "object": {
+            "type": "string",
+            "title": "Object"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "generated_text": {
+            "type": "string",
+            "title": "Generated Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "model",
+          "generated_text"
+        ],
+        "title": "TranslationResponse"
       },
       "ValidationError": {
         "properties": {
