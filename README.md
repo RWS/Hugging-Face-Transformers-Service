@@ -2,40 +2,50 @@
 
 ## Overview
 
-This **Local LLM server** is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.  
-The application is built leveraging FastAPI, Python and is able to run a wide selection of Hugging Face LLMs models. It can run either as a local Windows service or can be included in a Docker container enabling users to download and mount models locally.
+This **Local LLM server** is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.
+
+The application is built leveraging FastAPI and Python, and it supports a wide selection of Hugging Face LLMs. It can run either as a local Windows service or be included in a Docker container, enabling users to download and mount models locally.
 
 ### Key Features
 
 - **Model Management**: Users can easily download, mount, unmount, and delete Hugging Face models. Once a model is downloaded and mounted, it is accessible for inference locally, allowing for fast and efficient processing without repeated downloads.
-
 - **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages.
-
 - **Fine-Tuning**: Facilitate the fine-tuning of pretrained translation models with custom datasets, allowing users to adapt models to specific domains or language nuances.
-
-- **Text Generation**: Leverage models to generate contextual text based on provided prompts, ideal for translation tasks that requires dynamic text generation.
-
+- **Text Generation**: Leverage models to generate contextual text based on provided prompts, ideal for translation tasks that require dynamic text generation.
 - **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.
-
 - **Streaming Progress Updates**: For long-running operations such as downloading models, the application provides real-time progress updates, allowing users to monitor the status of their downloads.
 
-### Supported Model Types
+### Supported Models
 
-The following model types are supported, allowing users to leverage state-of-the-art machine learning capabilities for various natural language processing tasks:
+Below is an overview of the supported models categorized by their primary functionalities. This will help you choose the right model for your specific needs.
 
-**Model Types:**
+#### Translation Models
 
-- **Translation**: Utilizes `AutoModelForSeq2SeqLM`, enabling users to perform translations between multiple languages seamlessly.
+| **Model Name**                               | **Primary Uses**                                                                                                               | **Supported Languages**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **Notes**                                                                                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **facebook/nllb-200-distilled-600M**         | Machine translation research, especially for low-resource languages. Supports single-sentence translation among 200 languages. | eng_Latn, ita_Latn, deu_Latn, fra_Latn, spa_Latn, ell_Grek, jpn_Jpan, zho_Hans, zho_Hant, etc.… [Full list in [README](#supported-languages)]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Trained with input lengths not exceeding 512 tokens; translating longer sequences may degrade quality. Translations cannot be used as certified translations. |
+| **facebook/mbart-large-50-many-to-many-mmt** | Multilingual machine translation. Enables direct translation between any pair of 50 languages.                                 | Arabic (ar_AR), Czech (cs_CZ), German (de_DE), English (en_XX), Spanish (es_XX), Estonian (et_EE), Finnish (fi_FI), French (fr_XX), Gujarati (gu_IN), Hindi (hi_IN), Italian (it_IT), Japanese (ja_XX), Kazakh (kk_KZ), Korean (ko_KR), Lithuanian (lt_LT), Latvian (lv_LV), Burmese (my_MM), Nepali (ne_NP), Dutch (nl_XX), Romanian (ro_RO), Russian (ru_RU), Sinhala (si_LK), Turkish (tr_TR), Vietnamese (vi_VN), Chinese (zh_CN), Afrikaans (af_ZA), Azerbaijani (az_AZ), Bengali (bn_IN), Persian (fa_IR), Hebrew (he_IL), Croatian (hr_HR), Indonesian (id_ID), Georgian (ka_GE), Khmer (km_KH), Macedonian (mk_MK), Malayalam (ml_IN), Mongolian (mn_MN), Marathi (mr_IN), Polish (pl_PL), Pashto (ps_AF), Portuguese (pt_XX), Swedish (sv_SE), Swahili (sw_KE), Tamil (ta_IN), Telugu (te_IN), Thai (th_TH), Tagalog (tl_XX), Ukrainian (uk_UA), Urdu (ur_PK), Xhosa (xh_ZA), Galician (gl_ES), Slovene (sl_SI) |
+| **Helsinki-NLP/opus-mt-\***                  | Various language pair translations. Offers a wide range of language directions.                                                | Varies per model (e.g., en-it, it-en, en-fr, fr-en, en-de, de-en, etc.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Helsinki-NLP is focused on wide language coverage, open datasets, and public pre-trained models.                                                              |
 
-- **Text Generation**: Leverages `AutoModelForCausalLM`, allowing users to generate coherent and contextually relevant text based on prompt inputs. Ideal for applications such as chatbots and creative writing.
+#### Text Generation Models
 
-- **Llama**: Implements the `Llama` model from the `llama_cpp` library, designed for conversational tasks and assistant-like interactions. This model excels in generating context-specific responses based on provided messages, making it suitable for chat applications and interactive content generation.
-
-<br>
+| **Model Name**                                       | **Primary Uses**                                                                                      | **Supported Languages**          | **Notes**                                                                                                                           |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **lmstudio-community/Llama-3.2-3B-Instruct-GGUF**    | Instruction-tuned large language model for versatile text generation tasks.                           | Multilingual (primarily English) | Part of the Meta Llama collection, available in 3B, 8B, 70B, and 405B sizes.                                                        |
+| **lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF** | Enhanced text generation with instruction tuning for better contextual understanding.                 | Multilingual (primarily English) | Part of the Meta Llama collection.                                                                                                  |
+| **meta-llama/Llama-3.1-8B-Instruct**                 | Instruction-based text generation with improved performance over previous versions.                   | Multilingual (primarily English) | Developed by Meta.                                                                                                                  |
+| **meta-llama/Llama-3.2-3B-Instruct**                 | Advanced conversational tasks and assistant-like interactions.                                        | Multilingual (primarily English) | Suitable for chat applications and interactive content generation.                                                                  |
+| **bartowski/Phi-3.5-mini-instruct-GGUF**             | Lightweight, high-quality text generation with reasoning capabilities. Supports long context lengths. | English                          | Built with synthetic data and filtered publicly available websites. Supports 128K token context length.                             |
+| **microsoft/Phi-3.5-mini-instruct**                  | Similar to Phi-3.5-mini-instruct-GGUF with Microsoft optimizations.                                   | English                          |                                                                                                                                     |
+| **bartowski/Mistral-Nemo-Instruct-2407-GGUF**        | Instruction fine-tuned large language model with enhanced performance.                                | English                          | Jointly trained by Mistral AI and NVIDIA.                                                                                           |
+| **mistralai/Mistral-Nemo-Instruct-2407**             | Instruction fine-tuned version of Mistral-Nemo-Base-2407.                                             | English                          | Significantly outperforms existing models of similar size.                                                                          |
+| **google/gemma-2-9b**                                | General-purpose text generation, question answering, summarization, and reasoning.                    | English                          | Lightweight and deployable on limited-resource environments. Open weights available for pre-trained and instruction-tuned variants. |
+| **bartowski/Mistral-7B-Instruct-v0.3-GGUF**          | Instruction fine-tuned model for detailed and context-aware text generation.                          | English                          |                                                                                                                                     |
+| **Mistral-7B-Instruct-v0.3**                         | Enhanced instruction-tuned text generation model.                                                     | English                          |                                                                                                                                     |
 
 ### Fine-Tuning Translation Models
 
-Enable users to **fine-tune pretrained translation models** with their own datasets, enhancing the model's performance tailored to specific domains or language nuances. This feature currently supports translation models.
+Enable users to **fine-tune pretrained translation models** with their own datasets, enhancing the model's performance tailored to specific domains or language nuances.
 
 #### How It Works
 
@@ -46,29 +56,31 @@ Enable users to **fine-tune pretrained translation models** with their own datas
 #### Example Usage
 
 - **Initiate Fine-Tuning**:
-
-  ```json
-  {
-    "client_id": "unique_client_id_123",
-    "model_path": "/path/to/pretrained/model",
-    "output_dir": "/path/to/save/fine-tuned/model",
-    "validation_file": "/path/to/validation_data.csv",
-    "data_file": "/path/to/data.csv",
-    "source_lang": "en_XX",
-    "target_lang": "it_IT",
-    "num_train_epochs": 4,
-    "per_device_train_batch_size": 2,
-    "per_device_eval_batch_size": 2,
-    "learning_rate": 3e-5,
-    "weight_decay": 0.01,
-    "max_length": 512,
-    "save_steps": 10,
-    "save_total_limit": 2
-  }
-  ```
-
+    `json
+  {
+    "client_id": "unique_client_id_123",
+    "model_path": "/path/to/pretrained/model",
+    "output_dir": "/path/to/save/fine-tuned/model",
+    "validation_file": "/path/to/validation_data.csv",
+    "data_file": "/path/to/data.csv",
+    "source_lang": "en_XX",
+    "target_lang": "it_IT",
+    "num_train_epochs": 4,
+    "per_device_train_batch_size": 2,
+    "per_device_eval_batch_size": 2,
+    "learning_rate": 3e-5,
+    "weight_decay": 0.01,
+    "max_length": 512,
+    "save_steps": 10,
+    "save_total_limit": 2
+  }
+  `
 - **Establish WebSocket Connection**:
-  Connect to `/ws/progress/unique_client_id_123` to receive real-time updates during the fine-tuning process.
+    Connect to `/ws/progress/unique_client_id_123` to receive real-time updates during the fine-tuning process.
+
+### Supported Languages
+
+**Translation Models** support a variety of languages. Refer to the detailed list in the table above under each model or access the full list in the [Helsinki-NLP documentation](https://github.com/Helsinki-NLP).
 
 <br>
 
@@ -85,7 +97,7 @@ pip --version
 
 If not installed, download Python from the [official website](https://www.python.org/downloads/) and install it, ensuring you select the option to add Python to your PATH.
 
-### Step 2 Clone the Repository
+### Step 2: Clone the Repository
 
 ```bash
 git clone https://github.com/RWS/Hugging-Face-Transformers-Service.git
@@ -160,7 +172,7 @@ PORT=8001
 
 Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the Local LLM server on the specified port.
 
-### Step 8: Start the Local LLM server
+### Step 8: Start the Local LLM Server
 
 Run the Local LLM server:
 
@@ -170,10 +182,8 @@ python src/main.py
 
 ### Step 9: Access Swagger API & Documentation
 
-[Swagger API - http://localhost:8001/docs](http://localhost:8001/docs)
-
-[API Documentation](https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html)
-
+- **Swagger API**: [http://localhost:8001/docs](http://localhost:8001/docs)
+- **API Documentation**: [https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html](https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html)
 <!-- [http://localhost:8001/redoc](http://localhost:8001/redoc) -->
 
 <br>
@@ -194,7 +204,7 @@ After compiling your application, ensure that the `.env` file is present in the 
 
 - **Editing the `.env` File**: The `.env` file can be opened and modified using any text editor (e.g., Notepad, Visual Studio Code).
 
-### Step 3: Start the Local LLM server
+### Step 3: Start the Local LLM Server
 
 Run the Local LLM server by executing `HuggingFace-TS.exe` from the `dist` directory:
 
@@ -212,13 +222,13 @@ HuggingFace-TS.exe
 - `GET /v1/model/directory`: Retrieves the current download directory, including the `model_name` if provided and not empty.
 - `GET /v1/model/files`: Retrieves the list of available files in the specified Hugging Face model repository, including each file's size when available.
 - `POST /v1/model/download`: Initiate the download of a specified model from the Hugging Face Hub. Return progress updates on the download process.
-- `DEL /v1/model/delete`: Delete the local files of a previously mounted model based on the model name
-- `POST /v1/model/mount/`: Mount the specified model and setup the appropriate pipeline.
-- `POST /v1/model/unmuont`: Unmount the currently mounted model to free up resources.
+- `DEL /v1/model/delete`: Delete the local files of a previously mounted model based on the model name.
+- `POST /v1/model/mount/`: Mount the specified model and set up the appropriate pipeline.
+- `POST /v1/model/unmount`: Unmount the currently mounted model to free up resources.
 - `POST /v1/model/fine-tune`: Initiate the fine-tuning of a specified translation model with custom parameters and data. Receive real-time progress updates via WebSocket.
 - `POST /v1/translate`: Translate input text using the mounted translation model.
 - `POST /v1/completions`: Generate text based on the input prompt using the specified text generation model.
-- `POST /v1/chat/completions`: Generate chat-style completion using the specified text generation model. model..
+- `POST /v1/chat/completions`: Generate chat-style completion using the specified text generation model.
 - `WS /v1/ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
 
 ### Notes
@@ -300,14 +310,17 @@ Here is an example of how you might debug or navigate inside the container:
 ```bash
 # Access the container's shell
 docker exec -it <container_id> /bin/bash
-
 # List the contents of the model cache directory
 ls /app/model_cache
-
 # Exit the container's shell
 exit
-
 # Stop the container
 docker stop <container_id>
-
 ```
+
+---
+
+## Additional Notes
+
+- **Model Updates**: Regularly check for updates to the models you are using to ensure optimal performance and access to the latest features.
+- **Resource Management**: Monitor system resources when running multiple models or handling large datasets to prevent performance degradation.
