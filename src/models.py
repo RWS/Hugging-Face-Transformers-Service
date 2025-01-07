@@ -1,3 +1,4 @@
+from enum import Enum
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 
@@ -15,13 +16,21 @@ class TranslationRequest(BaseModel):
             }
         }
 
-class GeneratedResponse(BaseModel):
-    generated_response: str
+class TranslationResponse(BaseModel):
+    id: str
+    object: str
+    model: str
+    generated_text: str
     class Config:    
         protected_namespaces = ()     
 
 
 # Completion Models
+
+class ResponseType(str, Enum):
+    choices = "choices"
+    assistant = "assistant"
+
 class CompletionChoice(BaseModel):
     text: str
     index: int
@@ -32,9 +41,9 @@ class CompletionChoice(BaseModel):
 class CompletionResponse(BaseModel):
     id: str
     object: str
-    #created: int
     model: str
-    choices: List[CompletionChoice]
+    choices: Optional[List[CompletionChoice]] = None
+    generated_text: Optional[str] = None
 
 
 class CompletionRequest(BaseModel):
@@ -47,6 +56,7 @@ class CompletionRequest(BaseModel):
     stop: Optional[List[str]] = Field(None, description="Sequences where the API will stop generating further tokens.")
     echo: Optional[bool] = Field(False, description="Whether to echo the prompt in the completion.")
     best_of: Optional[int] = Field(1, description="Generates `best_of` completions server-side and returns the best.")
+    response_type: ResponseType = Field(ResponseType.choices, description="Type of response: 'choices' or 'assistant'.")
 
     class Config:
         json_schema_extra = {
@@ -59,7 +69,8 @@ class CompletionRequest(BaseModel):
                 "n": 1,
                 "stop": ["\n"],
                 "echo": False,
-                "best_of": 1
+                "best_of": 1,
+                "response_type": "choices"
             }
         }
 
@@ -79,9 +90,9 @@ class ChatCompletionChoice(BaseModel):
 class ChatCompletionResponse(BaseModel):
     id: str
     object: str
-    #created: int
     model: str
-    choices: List[ChatCompletionChoice]
+    choices: Optional[List[ChatCompletionChoice]] = None
+    generated_text: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -92,6 +103,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = Field(1.0, description="Nucleus sampling probability.")
     n: Optional[int] = Field(1, description="Number of completions to generate.")
     stop: Optional[List[str]] = Field(None, description="Sequences where the API will stop generating further tokens.")
+    response_type: ResponseType = Field(ResponseType.choices, description="Type of response: 'choices' or 'assistant'.")
 
     class Config:
         json_schema_extra = {
@@ -105,7 +117,8 @@ class ChatCompletionRequest(BaseModel):
                 "temperature": 0.7,
                 "top_p": 1.0,
                 "n": 1,
-                "stop": None
+                "stop": None,
+                "response_type": "choices"
             }
         }
 

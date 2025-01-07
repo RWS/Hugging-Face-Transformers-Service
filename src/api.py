@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Header, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from huggingface_hub import hf_hub_url
-from models import FineTuneRequest, DeleteModelResponse, TranslationRequest, GeneratedResponse, CompletionChoice, CompletionRequest, ChatCompletionChoice, CompletionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesResponse, TranslationRequest, GeneratedResponse, ModelInfoResponse, DownloadDirectoryResponse
+from models import ResponseType, FineTuneRequest, DeleteModelResponse, TranslationRequest, TranslationResponse, CompletionChoice, CompletionRequest, ChatCompletionChoice, CompletionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesResponse, TranslationRequest, ModelInfoResponse, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, fetch_model_info
@@ -294,8 +294,6 @@ async def list_models() -> List[ModelInfo]:
     
     logger.info(f"Successfully listed {len(models_info)} models.")
     return models_info
-
-
 
 @router.post(
     "/model/download",
@@ -1093,9 +1091,9 @@ async def delete_model(
     "/translation",
     summary="Translate Text",
     description="Translate input text using the specified translation model.",
-    response_model=GeneratedResponse
+    response_model=TranslationResponse
 )
-async def translate(translation_request: TranslationRequest) -> GeneratedResponse:
+async def translate(translation_request: TranslationRequest) -> TranslationResponse:
     """Translate input text using the specified translation model."""
     
     logger.info("POST /v1/translation - Translation request received.")
@@ -1126,7 +1124,16 @@ async def translate(translation_request: TranslationRequest) -> GeneratedRespons
         else:
             logger.warning("Translation pipeline returned an unexpected format.")
             translated_text = ""
-        return GeneratedResponse(generated_response=translated_text)
+
+        response = TranslationResponse(
+            id=str(uuid.uuid4()),
+            object="translation",
+            model=model_to_use.model_name,
+            generated_text=translated_text
+        )
+
+        logger.info(f"Translation response: {response}")
+        return response
     except Exception as e:
         logger.error(f"Error during translation with model '{translation_request.model_name}': {str(e)}")
         raise HTTPException(
@@ -1168,11 +1175,13 @@ async def completions(completion_request: CompletionRequest) -> CompletionRespon
     stop = completion_request.stop
     echo = completion_request.echo
     best_of = completion_request.best_of
+    response_type = completion_request.response_type
     
     logger.info(
         f"Generation parameters - Model: {completion_request.model_name}, "
         f"Max Tokens: {max_tokens}, Temperature: {temperature}, Top P: {top_p}, "
-        f"Number of Completions: {n}, Best Of: {best_of}, Echo: {echo}, Stop Sequences: {stop}"
+        f"Number of Completions: {n}, Best Of: {best_of}, Echo: {echo}, Stop Sequences: {stop}, "
+        f"Response Type: {response_type}"
     )
     
     try:
@@ -1230,13 +1239,22 @@ async def completions(completion_request: CompletionRequest) -> CompletionRespon
                     )
                 )
           
-        response = CompletionResponse(
-            id=str(uuid.uuid4()),
-            object="text_completion",
-            #created=int(model_to_use.created_timestamp),
-            model=model_to_use.model_name,
-            choices=choices
-        )
+        if response_type == ResponseType.assistant:        
+            first_choice = choices[0] if choices else None
+            generated_text = first_choice.text if first_choice else ""
+            response = CompletionResponse(
+                id=str(uuid.uuid4()),
+                object="text_completion",
+                model=model_to_use.model_name,
+                generated_text=generated_text
+            )
+        else:
+            response = CompletionResponse(
+                id=str(uuid.uuid4()),
+                object="text_completion",
+                model=model_to_use.model_name,
+                choices=choices
+            )
         
         logger.info(f"Completion response: {response}")
         return response
@@ -1278,11 +1296,12 @@ async def chat_completions(chat_request: ChatCompletionRequest) -> ChatCompletio
     top_p = chat_request.top_p
     n = chat_request.n
     stop = chat_request.stop
+    response_type = chat_request.response_type
     
     logger.info(
         f"Generation parameters - Model: {chat_request.model_name}, "
         f"Max Tokens: {max_tokens}, Temperature: {temperature}, Top P: {top_p}, "
-        f"Number of Completions: {n}, Stop Sequences: {stop}"
+        f"Number of Completions: {n}, Stop Sequences: {stop}, Response Type: {response_type}"
     )
     
     try:
@@ -1354,13 +1373,22 @@ async def chat_completions(chat_request: ChatCompletionRequest) -> ChatCompletio
                     )
                 )
                
-        response = ChatCompletionResponse(
-            id=str(uuid.uuid4()),
-            object="chat_completion",
-            #created=int(model_to_use.created_timestamp),
-            model=model_to_use.model_name,
-            choices=choices
-        )
+        if response_type == ResponseType.assistant:
+            first_choice = choices[0] if choices else None
+            generated_text = first_choice.message.content if first_choice else ""
+            response = ChatCompletionResponse(
+                id=str(uuid.uuid4()),
+                object="chat_completion",
+                model=model_to_use.model_name,
+                generated_text=generated_text
+            )
+        else:
+            response = ChatCompletionResponse(
+                id=str(uuid.uuid4()),
+                object="chat_completion",
+                model=model_to_use.model_name,
+                choices=choices
+            )
         
         logger.info(f"ChatCompletion response: {response}")
         return response
