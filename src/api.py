@@ -7,7 +7,6 @@ from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_t
 from config import config
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
 from llama_cpp import Llama
-from huggingface_hub import HfApi
 import glob
 import os
 from typing import Optional, Dict, List
@@ -1508,10 +1507,51 @@ async def get_model_info(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+       
     
+def preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue):
+    inputs = examples["source"]
+    targets = examples["target"]
+    if is_multilingual and model_type == "translation":
+        inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
+    targets = [
+        text if isinstance(text, str) and text.strip() else " "
+        for text in targets
+    ]
+    if len(inputs) > 0:
+        sample_input = inputs[0]
+        sample_target = targets[0]
+        queue.put_nowait(f"Preprocessed Input Sample: {sample_input}")
+        queue.put_nowait(f"Preprocessed Target Sample: {sample_target}")
+    if is_multilingual and model_type == "translation":
+        tokenizer.src_lang = request.source_lang
+        tokenizer.tgt_lang = request.target_lang
+        queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
 
-   
-    
+    try:
+        model_inputs = tokenizer(
+            inputs,
+            max_length=request.max_length,
+            truncation=True,
+            padding="max_length"
+        )
+        queue.put_nowait("Input texts tokenized.")
+    except Exception as e:
+        queue.put_nowait(f"Error tokenizing inputs: {e}")
+        raise e
+        
+    with tokenizer.as_target_tokenizer():
+        labels = tokenizer(
+            targets,
+            max_length=request.max_length,
+            truncation=True,
+            padding="max_length",
+        )
+    queue.put_nowait("Target texts tokenized.")
+    model_inputs["labels"] = labels["input_ids"]
+    queue.put_nowait("Labels assigned to model inputs.")
+    return model_inputs
+
 @router.post("/model/fine-tune", summary="Fine-Tune a Pretrained Translation Model",
              description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
 async def fine_tune(
@@ -1542,6 +1582,7 @@ async def fine_tune(
         "message": "Fine-tuning has started. You will receive progress updates via WebSocket.",
         "status": "started"
     }
+
 async def fine_tune_model(request: FineTuneRequest):
     client_id = request.client_id
     queue = asyncio.Queue()
@@ -1674,59 +1715,15 @@ async def fine_tune_model(request: FineTuneRequest):
         logger.info(f"Output directory '{request.output_dir}' is ready.")
         await send_progress(client_id, f"Output directory '{request.output_dir}' is ready.")
 
-        # Define the preprocessing function based on model type
-        def preprocess_function(examples):
-            inputs = examples["source"]
-            targets = examples["target"]
-            if is_multilingual and model_type == "translation":
-                inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
-            targets = [
-                text if isinstance(text, str) and text.strip() else " "
-                for text in targets
-            ]
-            if len(inputs) > 0:
-                sample_input = inputs[0]
-                sample_target = targets[0]
-                queue.put_nowait(f"Preprocessed Input Sample: {sample_input}")
-                queue.put_nowait(f"Preprocessed Target Sample: {sample_target}")
-            if is_multilingual and model_type == "translation":
-                tokenizer.src_lang = request.source_lang
-                tokenizer.tgt_lang = request.target_lang
-                queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
-
-            try:
-                model_inputs = tokenizer(
-                    inputs,
-                    max_length=request.max_length,
-                    truncation=True,
-                    padding="max_length",
-                )
-                queue.put_nowait("Input texts tokenized.")
-            except Exception as e:
-                queue.put_nowait(f"Error tokenizing inputs: {e}")
-                raise e
-
-            with tokenizer.as_target_tokenizer():
-                labels = tokenizer(
-                    targets,
-                    max_length=request.max_length,
-                    truncation=True,
-                    padding="max_length",
-                )
-            queue.put_nowait("Target texts tokenized.")
-            model_inputs["labels"] = labels["input_ids"]
-            queue.put_nowait("Labels assigned to model inputs.")
-            return model_inputs
-
         # Apply preprocessing to the training dataset
         logger.info("Applying preprocessing to the training dataset.")
         await send_progress(client_id, "Applying preprocessing to the training dataset.")
         tokenized_dataset = dataset.map(
-            preprocess_function,
+            lambda examples: preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue),
             batched=True,
             remove_columns=["source", "target"],
             desc="Tokenizing the dataset",
-            num_proc=4,
+            num_proc=4, 
         )
         tokenized_dataset.set_format("torch")
         logger.info("Training dataset tokenization complete.")
@@ -1735,51 +1732,12 @@ async def fine_tune_model(request: FineTuneRequest):
         # Optionally prepare validation dataset
         tokenized_validation = None
         if validation_dataset:
-            def preprocess_validation(examples):
-                inputs = examples["source"]
-                targets = examples["target"]
-                if is_multilingual and model_type == "translation":
-                    inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
-                targets = [
-                    text if isinstance(text, str) and text.strip() else " "
-                    for text in targets
-                ]
-                if is_multilingual and model_type == "translation":
-                    tokenizer.src_lang = request.source_lang
-                    tokenizer.tgt_lang = request.target_lang
-                    queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
-
-                try:
-                    model_inputs = tokenizer(
-                        inputs,
-                        max_length=request.max_length,
-                        truncation=True,
-                        padding="max_length",
-                    )
-                    queue.put_nowait("Validation input texts tokenized.")
-                except Exception as e:
-                    queue.put_nowait(f"Error tokenizing validation inputs: {e}")
-                    raise e
-                with tokenizer.as_target_tokenizer():
-                    labels = tokenizer(
-                        targets,
-                        max_length=request.max_length,
-                        truncation=True,
-                        padding="max_length",
-                    )
-                queue.put_nowait("Validation target texts tokenized.")
-                model_inputs["labels"] = labels["input_ids"]
-                queue.put_nowait("Validation labels assigned to model inputs.")
-                return model_inputs
-
-            logger.info("Applying preprocessing to the validation dataset.")
-            await send_progress(client_id, "Applying preprocessing to the validation dataset.")
             tokenized_validation = validation_dataset.map(
-                preprocess_validation,
+                lambda examples: preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue),
                 batched=True,
                 remove_columns=["source", "target"],
                 desc="Tokenizing the validation dataset",
-                num_proc=4,
+                num_proc=4, 
             )
             tokenized_validation.set_format("torch")
             logger.info("Validation dataset tokenization complete.")
@@ -1801,7 +1759,7 @@ async def fine_tune_model(request: FineTuneRequest):
             save_steps=request.save_steps,
             save_total_limit=request.save_total_limit,
             save_strategy="steps",
-            evaluation_strategy="epoch" if tokenized_validation else "no",
+            eval_strategy="epoch" if tokenized_validation else "no",
             eval_steps=request.save_steps if tokenized_validation else None,
             load_best_model_at_end=True if tokenized_validation else False,
             metric_for_best_model="loss",

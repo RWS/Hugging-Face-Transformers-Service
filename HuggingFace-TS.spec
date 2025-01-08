@@ -25,6 +25,7 @@ additional_datas = [
   ('LICENSE', '.'), 
   ('README.md', '.'), 
   ('src/api.py', 'src/'), 
+  ('src/app.py', 'src/'),
   ('src/config.py', 'src/'), 
   ('src/connection_manager.py', 'src/'), 
   ('src/helpers.py', 'src/'), 

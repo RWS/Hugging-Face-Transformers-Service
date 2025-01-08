@@ -1,9 +1,6 @@
-from fastapi import Header, HTTPException
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM
 import os
-import sys
 import logging
-from logging.handlers import RotatingFileHandler
 from huggingface_hub import HfApi
 from typing import Optional, List
 from datasets import Dataset
@@ -56,52 +53,6 @@ def extract_assistant_response_completions(results: CompletionResponse) -> List[
 def extract_assistant_response_chat(results: ChatCompletionResponse) -> List[str]:
     return [choice.message.content for choice in results.choices]
 
-def setup_logging():
-    base_dir = get_base_directory()
-    log_dir = os.path.join(base_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)  
-
-    log_file = os.path.join(log_dir, "hfts.log")
-   
-    rotating_handler = RotatingFileHandler(
-        filename=log_file,
-        maxBytes=10*1024*1024,  # 10 MB
-        backupCount=20, # Keep up to 20 backup files
-        encoding="utf-8",
-        delay=False
-    )
-
-    # Create a logging format
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
-    rotating_handler.setFormatter(formatter)
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO) 
-    logger.addHandler(rotating_handler)
-  
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
-    logger.info(f"Base Directory: {base_dir}")
-    logger.info(f"Log Directory: {log_dir}")
-    logger.info(f"Log File: {log_file}")
-
-def get_base_directory() -> str:
-    """
-    Returns the base directory where the executable is located.
-    Handles both frozen (PyInstaller) and unfrozen states.
-    """
-    if getattr(sys, 'frozen', False):
-        # If the application is run as a bundle, the PyInstaller bootloader
-        # extends the sys module by a flag frozen=True and sets the app
-        # path into variable _MEIPASS'.
-        return os.path.dirname(sys.executable)
-    else:
-        # If unfrozen, return the directory of the script file.
-        return os.path.dirname(os.path.abspath(__file__))
 
 def extract_assistant_response(response):
     """
