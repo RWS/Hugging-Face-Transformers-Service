@@ -101,9 +101,9 @@ if __name__ == "__main__":
             app,
             host=config.HOST,
             port=int(config.PORT),
-            ws_ping_interval=600,   # 10 mins
-            ws_ping_timeout=120,    # 2 mins
-            timeout_keep_alive=1200  # 20 mins / TODO review this so that we don't keep zombie connections open for such a long time...
+            ws_ping_interval=60,   # 1 minute
+            ws_ping_timeout=20,    # 2 seconds
+            timeout_keep_alive=300  # 5 minutes
         )
     except Exception as e:
         logger.exception("Failed to start the server.")

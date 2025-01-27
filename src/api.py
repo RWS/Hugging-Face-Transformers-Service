@@ -17,6 +17,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import aiohttp
+from aiohttp import ClientTimeout
 import pandas as pd
 from datasets import Dataset
 import aiofiles
@@ -621,8 +622,12 @@ async def download_file(
     headers = {}
     if token:
         headers['Authorization'] = f'Bearer {token}'
+
+    # Set a custom timeout (e.g., 1 hour)
+    timeout = ClientTimeout(total=3600)  # 3600 seconds = 1 hour
+
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.get(download_url) as response:
                 response.raise_for_status()
                 total_size = response.headers.get('Content-Length')
