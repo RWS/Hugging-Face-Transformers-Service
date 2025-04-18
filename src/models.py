@@ -257,6 +257,7 @@ class FineTuneRequest(BaseModel):
     learning_rate: Optional[float] = Field(3e-5, description="Learning rate for the optimizer.")
     weight_decay: Optional[float] = Field(0.01, description="Weight decay for the optimizer.")
     max_length: Optional[int] = Field(512, description="Maximum sequence length for tokenization.")
+    save_strategy: Optional[str] = Field("steps", description="Strategy to save the model (e.g., 'no', 'steps').")
     save_steps: Optional[int] = Field(50, description="Number of steps between each model save.")
     save_total_limit: Optional[int] = Field(3, description="Maximum number of checkpoints to save.")  
     validation_file: Optional[str] = Field(None, description="Path to the CSV validation data file (optional).")  
@@ -269,14 +270,15 @@ class FineTuneRequest(BaseModel):
                 "output_dir": "C:/HuggingFace/Models/Helsinki-NLP--opus-mt-en-it-finetuned-it",
                 "data_file": "C:/HuggingFace/Data/data.csv",
                 "validation_file": "C:/HuggingFace/Data/validation_data.csv",
-                #"source_lang": "en_XX",
-                #"target_lang": "it_IT",
+                "source_lang": "en_XX",
+                "target_lang": "it_IT",
                 "num_train_epochs": 4,
                 "per_device_train_batch_size": 2,
                 "per_device_eval_batch_size": 2,
                 "learning_rate": 3e-5,
                 "weight_decay": 0.01,
                 "max_length": 512,
+                "save_strategy": "steps",
                 "save_steps": 10,
                 "save_total_limit": 2                
             }

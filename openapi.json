@@ -3,7 +3,7 @@
   "info": {
     "title": "Hugging Face Transformers Service",
     "description": "This **Local LLM server** application is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.",
-    "version": "1.0.9"
+    "version": "1.0.11"
   },
   "paths": {
     "/v1/model/directory": {
@@ -217,6 +217,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Download Model Endpoint V1 Model Download Post"
                 },
                 "example": {
@@ -263,6 +264,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Mount Model V1 Model Mount Post"
                 },
@@ -330,6 +332,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Unmount Model V1 Model Unmount Post"
                 },
@@ -854,6 +857,7 @@
           "logprobs": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -1262,6 +1266,19 @@
             "description": "Maximum sequence length for tokenization.",
             "default": 512
           },
+          "save_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Save Strategy",
+            "description": "Strategy to save the model (e.g., 'no', 'steps').",
+            "default": "steps"
+          },
           "save_steps": {
             "anyOf": [
               {
@@ -1320,7 +1337,10 @@
           "per_device_eval_batch_size": 2,
           "per_device_train_batch_size": 2,
           "save_steps": 10,
+          "save_strategy": "steps",
           "save_total_limit": 2,
+          "source_lang": "en_XX",
+          "target_lang": "it_IT",
           "validation_file": "C:/HuggingFace/Data/validation_data.csv",
           "weight_decay": 0.01
         }
@@ -1459,6 +1479,7 @@
           "config": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -1481,6 +1502,7 @@
           "minimal_info": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -1492,6 +1514,7 @@
           "info": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {

@@ -7,7 +7,7 @@ app = FastAPI(
         "This **Local LLM server** application is a Windows service application designed to provide an interface "
         "for working with Hugging Face models, specifically catering to translation and text generation tasks."
     ),
-    version="1.0.10"
+    version="1.0.11"
 )
 
 app.include_router(router)

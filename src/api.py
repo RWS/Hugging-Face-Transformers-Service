@@ -5,7 +5,7 @@ from state import model_state
 from connection_manager import ConnectionManager
 from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState, Seq2SeqTrainingArguments
 from llama_cpp import Llama
 import glob
 import os
@@ -23,6 +23,7 @@ from datasets import Dataset
 import aiofiles
 import uuid
 import gc
+from functools import partial
 
 logger = logging.getLogger(__name__)
 
@@ -1514,47 +1515,138 @@ async def get_model_info(
         raise HTTPException(status_code=500, detail=str(e))
        
     
-def preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue):
+async def send_ws_message(client_id: str, message: str, msg_type: str = "progress"):
+    json_message = json.dumps({"type": msg_type, "message": message})
+    await manager.send_message(client_id, json_message)
+    await asyncio.sleep(0.01)  # Prevents busy waiting
+
+async def send_progress(client_id: str, message: str):
+    await send_ws_message(client_id, message, "progress")
+
+async def progress_sender(client_id: str, queue: asyncio.Queue):
+    while True:
+        message = await queue.get()
+        if message == "TRAINING_DONE":
+            break
+        await send_progress(client_id, message)
+        queue.task_done()
+
+def validate_token_ids(tokenized_dataset, tokenizer):
+    total_invalid = 0
+    total_tokens = 0
+
+    for i in range(len(tokenized_dataset)):
+        labels = tokenized_dataset[i]["labels"]
+        decoder_ids = tokenized_dataset[i]["decoder_input_ids"]
+        for seq, name in [(labels, 'labels'), (decoder_ids, 'decoder_input_ids')]:
+            for idx, token_id in enumerate(seq):
+                total_tokens += 1
+                if token_id < -100 or token_id >= tokenizer.vocab_size:
+                    print(f"Invalid token id {token_id} in {name} at seq {i}, position {idx}")
+                    total_invalid += 1
+    print(f"Total tokens checked: {total_tokens}")
+    print(f"Total invalid token ids: {total_invalid}")
+    return total_invalid == 0
+
+def check_token_id_ranges(dataset, keys, tokenizer):
+    for key in keys:
+        all_ids = []
+        for i in range(len(dataset)):
+            ids = dataset[i][key]
+            if torch.is_tensor(ids):
+                ids = ids.tolist()
+            all_ids.extend(ids)
+        if not all_ids:
+            print(f"[Warning] No data found in '{key}'")
+            continue
+        min_id = min(all_ids)
+        max_id = max(all_ids)
+        print(f"Min and max token IDs in '{key}': {min_id}, {max_id}", flush=True)
+        if min_id < 0 or max_id >= tokenizer.vocab_size:
+            print(f"ERROR: token IDs in '{key}' out of allowed range [0, {tokenizer.vocab_size-1}]")
+
+
+def preprocess_function_seq2seq(examples, request, is_multilingual, model_type, tokenizer, model):
     inputs = examples["source"]
     targets = examples["target"]
-    if is_multilingual and model_type == "translation":
-        inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
-    targets = [
-        text if isinstance(text, str) and text.strip() else " "
-        for text in targets
-    ]
-    if len(inputs) > 0:
-        sample_input = inputs[0]
-        sample_target = targets[0]
-        queue.put_nowait(f"Preprocessed Input Sample: {sample_input}")
-        queue.put_nowait(f"Preprocessed Target Sample: {sample_target}")
-    if is_multilingual and model_type == "translation":
-        tokenizer.src_lang = request.source_lang
-        tokenizer.tgt_lang = request.target_lang
-        queue.put_nowait(f"Set tokenizer src_lang='{request.source_lang}' and tgt_lang='{request.target_lang}'.")
 
-    try:
-        model_inputs = tokenizer(
-            inputs,
-            max_length=request.max_length,
-            truncation=True,
-            padding="max_length"
-        )
-        queue.put_nowait("Input texts tokenized.")
-    except Exception as e:
-        queue.put_nowait(f"Error tokenizing inputs: {e}")
-        raise e
-        
-    with tokenizer.as_target_tokenizer():
-        labels = tokenizer(
-            targets,
-            max_length=request.max_length,
-            truncation=True,
-            padding="max_length",
-        )
-    queue.put_nowait("Target texts tokenized.")
-    model_inputs["labels"] = labels["input_ids"]
-    queue.put_nowait("Labels assigned to model inputs.")
+    if is_multilingual and model_type == "translation" and request.target_lang:
+        inputs = [f">>{request.target_lang}<< {text}" for text in inputs]
+
+    targets = [t if isinstance(t, str) and t.strip() else " " for t in targets]
+
+    model_inputs = tokenizer(
+        inputs,
+        max_length=request.max_length,
+        truncation=True,
+        padding="max_length",
+    )
+    labels = tokenizer(
+        targets,
+        max_length=request.max_length,
+        truncation=True,
+        padding="max_length",
+    )["input_ids"]
+
+    pad_token_id = tokenizer.pad_token_id
+    vocab_size = tokenizer.vocab_size
+    unk_token_id = tokenizer.unk_token_id if tokenizer.unk_token_id is not None else 0
+    bos_token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else \
+                   model.config.decoder_start_token_id if hasattr(model.config, 'decoder_start_token_id') else unk_token_id
+
+    cleaned_labels = []
+    for seq in labels:
+        new_seq = []
+        for token_id in seq:
+            if token_id == pad_token_id:
+                new_seq.append(-100)  # Mask padding tokens
+            elif token_id < 0 or token_id >= vocab_size:
+                new_seq.append(unk_token_id)  # Replace invalid tokens with unk
+            else:
+                new_seq.append(token_id)
+        cleaned_labels.append(new_seq)
+
+    decoder_input_ids = [[bos_token_id] + seq[:-1] for seq in cleaned_labels]
+
+    model_inputs["labels"] = cleaned_labels
+    model_inputs["decoder_input_ids"] = decoder_input_ids
+
+    return model_inputs
+
+def preprocess_function_causal(examples, request, tokenizer):
+    inputs = examples["source"]
+
+    labels = tokenizer(
+        inputs,
+        max_length=request.max_length,
+        truncation=True,
+        padding="max_length",
+    )["input_ids"]
+
+    pad_token_id = tokenizer.pad_token_id
+    unk_token_id = tokenizer.unk_token_id if tokenizer.unk_token_id is not None else 0
+
+    cleaned_labels = []
+    for seq in labels:
+        new_seq = []
+        for token_id in seq:
+            if token_id == pad_token_id:
+                new_seq.append(-100)  # Mask padding tokens
+            elif token_id < 0 or token_id >= tokenizer.vocab_size:
+                new_seq.append(unk_token_id)  # Replace invalid tokens
+            else:
+                new_seq.append(token_id)
+        cleaned_labels.append(new_seq)
+
+    model_inputs = tokenizer(
+        inputs,
+        max_length=request.max_length,
+        truncation=True,
+        padding="max_length",
+    )
+    model_inputs["labels"] = cleaned_labels
+    # No decoder_input_ids for causal models
+
     return model_inputs
 
 @router.post("/model/fine-tune", summary="Fine-Tune a Pretrained Translation Model",
@@ -1588,7 +1680,7 @@ async def fine_tune(
         "status": "started"
     }
 
-async def fine_tune_model(request: FineTuneRequest):
+async def fine_tune_model(request: 'FineTuneRequest'):
     client_id = request.client_id
     queue = asyncio.Queue()
     progress_task = asyncio.create_task(progress_sender(client_id, queue))
@@ -1599,160 +1691,95 @@ async def fine_tune_model(request: FineTuneRequest):
 
         model_type = infer_model_type(request.model_path)
         if model_type == "unknown":
-            raise ValueError("Unable to determine the model type. Supported types are 'translation' and 'text-generation'.")
-
-        logger.info(f"Inferred model type: {model_type}")
+            raise ValueError("Unsupported model type.")
         await send_progress(client_id, f"Inferred model type: {model_type}")
 
         # Validate paths
-        model_path = request.model_path
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model directory '{model_path}' does not exist.")
-        logger.info(f"Model directory '{model_path}' exists.")
-        await send_progress(client_id, f"Model directory '{model_path}' exists.")
-
+        if not os.path.exists(request.model_path):
+            raise FileNotFoundError(f"Model path '{request.model_path}' does not exist.")
         if not os.path.exists(request.data_file):
             raise FileNotFoundError(f"Data file '{request.data_file}' does not exist.")
-        logger.info(f"Data file '{request.data_file}' exists.")
-        await send_progress(client_id, f"Data file '{request.data_file}' exists.")
 
-        # Data Validation based on model type
-        expected_columns = {}
-        if model_type == "translation":
-            expected_columns = {"src_text", "tgt_text"}
-        elif model_type == "text-generation":
-            expected_columns = {"prompt", "completion"}
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
+        expected_columns = {"src_text", "tgt_text"} if model_type == "translation" else {"prompt", "completion"}
 
         df = pd.read_csv(request.data_file)
-        logger.info("Data file loaded into DataFrame.")
-        await send_progress(client_id, "Data file loaded into DataFrame.")
-
-        # Check for required columns
         if not expected_columns.issubset(df.columns):
             missing = expected_columns - set(df.columns)
-            raise ValueError(f"Data file is missing required columns: {missing}")
+            raise ValueError(f"Missing required columns: {missing}")
 
-        logger.info(f"Data file contains required columns: {expected_columns}")
-        await send_progress(client_id, f"Data file contains required columns: {expected_columns}")
-
-        # Further preprocessing based on model type
         if model_type == "translation":
             df = df.rename(columns={"src_text": "source", "tgt_text": "target"})
-        elif model_type == "text-generation":
+        else:
             df = df.rename(columns={"prompt": "source", "completion": "target"})
 
-        # Remove rows with empty target
-        initial_count = len(df)
-        df = df[df['target'].notna() & (df['target'].str.strip() != '')]
-        final_count = len(df)
-        logger.info(f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
-        await send_progress(client_id, f"Filtered dataset: {final_count} out of {initial_count} examples remain.")
-        if final_count == 0:
-            raise ValueError("No valid examples found in the dataset after filtering out empty 'target'.")
+        df = df.dropna(subset=["target"])
+        df = df[df["target"].str.strip() != ""]
 
-        # Prepare the dataset
         dataset = Dataset.from_pandas(df)
-        logger.info("Dataset prepared and columns renamed.")
         await send_progress(client_id, "Dataset prepared and columns renamed.")
 
-        # Optionally load validation data
         validation_dataset = None
         if request.validation_file:
-            if not os.path.exists(request.validation_file):
-                raise FileNotFoundError(f"Validation file '{request.validation_file}' does not exist.")
-            logger.info(f"Validation file '{request.validation_file}' exists.")
-            await send_progress(client_id, f"Validation file '{request.validation_file}' exists.")
-
             df_val = pd.read_csv(request.validation_file)
-
-            # Check for required columns in validation data
             if not expected_columns.issubset(df_val.columns):
                 missing = expected_columns - set(df_val.columns)
-                raise ValueError(f"Validation data file is missing required columns: {missing}")
-
+                raise ValueError(f"Validation data missing columns: {missing}")
             if model_type == "translation":
                 df_val = df_val.rename(columns={"src_text": "source", "tgt_text": "target"})
-            elif model_type == "text-generation":
+            else:
                 df_val = df_val.rename(columns={"prompt": "source", "completion": "target"})
-
-            # Remove empty targets
-            df_val = df_val[df_val['target'].notna() & (df_val['target'].str.strip() != '')]
-            if len(df_val) == 0:
-                raise ValueError("No valid examples found in the validation dataset after filtering out empty 'target'.")
-
+            df_val = df_val.dropna(subset=["target"])
+            df_val = df_val[df_val["target"].str.strip() != ""]
             validation_dataset = Dataset.from_pandas(df_val)
-            logger.info("Validation dataset loaded and prepared.")
             await send_progress(client_id, "Validation dataset loaded and prepared.")
 
-        # Load tokenizer and model based on model type
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(request.model_path)
+
         if model_type == "translation":
-            model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
-        elif model_type == "text-generation":
-            model = AutoModelForCausalLM.from_pretrained(model_path)
-        logger.info("Tokenizer and Model loaded successfully.")
-        await send_progress(client_id, "Tokenizer and Model loaded successfully.")
-
-        # Handle multilingual models if applicable
-        is_multilingual = False
-        if model_type == "translation" and hasattr(tokenizer, 'lang_code_to_id') and tokenizer.lang_code_to_id:
-            is_multilingual = True
-            logger.info("Model is detected as multilingual based on tokenizer.")
-            await send_progress(client_id, "Model is detected as multilingual based on tokenizer.")
-
-            if not request.source_lang or not request.target_lang:
-                raise ValueError("Source and target language codes must be provided for multilingual models.")
-            if request.source_lang not in tokenizer.lang_code_to_id:
-                raise ValueError(f"Unsupported source language code: '{request.source_lang}'")
-            if request.target_lang not in tokenizer.lang_code_to_id:
-                raise ValueError(f"Unsupported target language code: '{request.target_lang}'")
-            logger.info(f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
-            await send_progress(client_id, f"Source language '{request.source_lang}' and target language '{request.target_lang}' are supported.")
-
+            model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
+            preprocess_fn = partial(preprocess_function_seq2seq, request=request, is_multilingual=True, model_type=model_type, tokenizer=tokenizer, model=model)
+            training_args_class = Seq2SeqTrainingArguments
         else:
-            logger.info("Model is detected as non-multilingual or not applicable. Language codes will be ignored.")
-            await send_progress(client_id, "Model is detected as non-multilingual or not applicable. Language codes will be ignored.")
+            model = AutoModelForCausalLM.from_pretrained(request.model_path)
+            preprocess_fn = partial(preprocess_function_causal, request=request, tokenizer=tokenizer)
+            training_args_class = TrainingArguments
 
-        # Create output directory if it doesn't exist
+        # If vocab sizes mismatch, resize embeddings
+        if len(tokenizer) != model.config.vocab_size:
+            tokenizer.add_special_tokens({"pad_token": tokenizer.pad_token})
+            model.resize_token_embeddings(len(tokenizer))
+
         os.makedirs(request.output_dir, exist_ok=True)
-        logger.info(f"Output directory '{request.output_dir}' is ready.")
-        await send_progress(client_id, f"Output directory '{request.output_dir}' is ready.")
 
-        # Apply preprocessing to the training dataset
-        logger.info("Applying preprocessing to the training dataset.")
-        await send_progress(client_id, "Applying preprocessing to the training dataset.")
         tokenized_dataset = dataset.map(
-            lambda examples: preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue),
+            preprocess_fn,
             batched=True,
             remove_columns=["source", "target"],
+            num_proc=1,
             desc="Tokenizing the dataset",
-            num_proc=4, 
         )
-        tokenized_dataset.set_format("torch")
-        logger.info("Training dataset tokenization complete.")
-        await send_progress(client_id, "Training dataset tokenization complete.")
 
-        # Optionally prepare validation dataset
+        # Defensive column removal
+        for col in ["source", "target"]:
+            if col in tokenized_dataset.column_names:
+                tokenized_dataset = tokenized_dataset.remove_columns([col])
+        tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
         tokenized_validation = None
         if validation_dataset:
             tokenized_validation = validation_dataset.map(
-                lambda examples: preprocess_function(examples, request, is_multilingual, model_type, tokenizer, queue),
+                preprocess_fn,
                 batched=True,
                 remove_columns=["source", "target"],
                 desc="Tokenizing the validation dataset",
-                num_proc=4, 
+                num_proc=1,
             )
-            tokenized_validation.set_format("torch")
-            logger.info("Validation dataset tokenization complete.")
-            await send_progress(client_id, "Validation dataset tokenization complete.")
-        else:
-            logger.info("No validation dataset provided.")
-            await send_progress(client_id, "No validation dataset provided.")
+            for col in ["source", "target"]:
+                if col in tokenized_validation.column_names:
+                    tokenized_validation = tokenized_validation.remove_columns([col])
+            tokenized_validation.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-        # Define training arguments
-        training_args = TrainingArguments(
+        training_args = training_args_class(
             output_dir=request.output_dir,
             num_train_epochs=request.num_train_epochs,
             per_device_train_batch_size=request.per_device_train_batch_size,
@@ -1760,20 +1787,21 @@ async def fine_tune_model(request: FineTuneRequest):
             learning_rate=request.learning_rate,
             weight_decay=request.weight_decay,
             logging_dir=os.path.join(request.output_dir, "logs"),
-            logging_steps=10,
+            logging_steps=1,
             save_steps=request.save_steps,
             save_total_limit=request.save_total_limit,
-            save_strategy="steps",
-            eval_strategy="epoch" if tokenized_validation else "no",
-            eval_steps=request.save_steps if tokenized_validation else None,
-            load_best_model_at_end=True if tokenized_validation else False,
+            save_strategy=request.save_strategy if hasattr(request, "save_strategy") else "no",
+            eval_strategy="epoch" if validation_dataset else "no",
+            eval_steps=request.save_steps if validation_dataset else None,
+            load_best_model_at_end=True if validation_dataset else False,
             metric_for_best_model="loss",
             fp16=torch.cuda.is_available(),
+            remove_unused_columns=False,
+            lr_scheduler_type="constant",
+            predict_with_generate=True if model_type == "translation" else False,
+            generation_max_length=request.max_length if model_type == "translation" else None,
         )
-        logger.info("Training arguments set.")
-        await send_progress(client_id, "Training arguments set.")
 
-        # Initialize callbacks
         websocket_progress_callback = WebSocketProgressCallback(client_id, queue)
         cancel_training_callback = CancelTrainingCallback(client_id)
 
@@ -1785,57 +1813,33 @@ async def fine_tune_model(request: FineTuneRequest):
             tokenizer=tokenizer,
             callbacks=[websocket_progress_callback, cancel_training_callback],
         )
-        logger.info("Trainer initialized.")
-        await send_progress(client_id, "Trainer initialized.")
-        
-        logger.info("Commencing training.")
-        await send_progress(client_id, "Commencing training.")
 
-        # Run trainer.train() in a separate thread to avoid blocking the event loop        
+        await send_progress(client_id, "Trainer initialized. Commencing training.")
         train_future = asyncio.to_thread(trainer.train)
         await train_future
 
-        # Check if cancellation was requested
         if model_states.get(client_id, {}).get("cancel_requested", False):
-            logger.info("Training was cancelled by the user.")
-            await send_progress(client_id, "Training was cancelled.")
+            await send_ws_message(client_id, "Training cancelled", "cancelled")
             return
 
-        logger.info("Training completed.")
-        await send_progress(client_id, "Training completed.")
-
-        # Save the fine-tuned model and tokenizer
         trainer.save_model(request.output_dir)
         tokenizer.save_pretrained(request.output_dir)
-        logger.info(f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
-        await send_progress(client_id, f"Fine-tuned model and tokenizer saved to '{request.output_dir}'.")
 
-        success_message = "Fine-tuning process completed successfully."
-        logger.info(success_message)
-        await send_progress(client_id, success_message)
+        await send_progress(client_id, "Fine-tuning completed and model saved.")
+        await send_ws_message(client_id, "Fine-tuning process completed successfully.", "completed")
 
     except Exception as e:
-        error_message = f"Error during fine-tuning: {e}"
-        logger.error(error_message)
-        await send_progress(client_id, error_message)
+        await send_ws_message(client_id, f"Error during fine-tuning: {e}", "error")
+
     finally:
         await queue.put("TRAINING_DONE")
         await progress_task
-        # Clean up the cancellation request state
         model_states.pop(client_id, None)
 
-async def progress_sender(client_id: str, queue: asyncio.Queue):
-    while True:
-        message = await queue.get()
-        if message == "TRAINING_DONE":
-            break
-        await send_progress(client_id, message)
-        queue.task_done()
-
-async def send_progress(client_id: str, message: str):
-    json_message = json.dumps({"type": "progress", "message": message})
-    await manager.send_message(client_id, json_message)
-
+class DebugCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        print(f"Step {state.global_step} completed, loss: {state.log_history[-1].get('loss') if state.log_history else 'N/A'}")
+              
 class WebSocketProgressCallback(TrainerCallback):
     def __init__(self, client_id: str, queue: asyncio.Queue):
         self.client_id = client_id
@@ -1855,12 +1859,27 @@ class WebSocketProgressCallback(TrainerCallback):
             self.queue.put_nowait(f"Step {state.global_step} started.")
 
     def on_step_end(self, args, state, control, **kwargs):
-        if state.global_step % 10 == 0:
-            self.queue.put_nowait(f"Step {state.global_step} completed.")
+        progress_pct = None
+        if state.max_steps > 0:
+            progress_pct = (state.global_step / state.max_steps) * 100
+        elif state.epoch is not None and args.num_train_epochs > 0:
+            progress_pct = (state.epoch / args.num_train_epochs) * 100
+        if progress_pct is not None:
+            progress_msg = json.dumps({
+                "type": "progress_percent",
+                "progress": round(progress_pct, 1),
+                "epoch": state.epoch,
+                "step": state.global_step
+            })
+            self.queue.put_nowait(progress_msg)
+        if state.global_step % max(1, args.logging_steps) == 0:
+            self.queue.put_nowait(
+                f"Epoch {state.epoch} | Step {state.global_step} completed."
+            )
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs:
-            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k, v in logs.items()])
+            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k,v in logs.items()])
             self.queue.put_nowait(message)
 
 class CancelTrainingCallback(TrainerCallback):
@@ -1870,9 +1889,10 @@ class CancelTrainingCallback(TrainerCallback):
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         if model_states.get(self.client_id, {}).get("cancel_requested", False):
             logger.info(f"Cancellation detected for client {self.client_id}. Stopping training.")
-            asyncio.create_task(send_progress(
+            asyncio.create_task(send_ws_message(
                 self.client_id,
-                "Cancellation requested. Stopping training..."
+                "Cancellation requested. Stopping training...",
+                "cancelled"
             ))
             return TrainerControl.STOP
         return control
@@ -1880,9 +1900,10 @@ class CancelTrainingCallback(TrainerCallback):
     def on_epoch_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         if model_states.get(self.client_id, {}).get("cancel_requested", False):
             logger.info(f"Cancellation detected for client {self.client_id} at epoch end. Stopping training.")
-            asyncio.create_task(send_progress(
+            asyncio.create_task(send_ws_message(
                 self.client_id,
-                "Cancellation requested. Stopping training..."
+                "Cancellation requested. Stopping training...",
+                "cancelled"
             ))
             return TrainerControl.STOP
-        return control        
+        return control 
