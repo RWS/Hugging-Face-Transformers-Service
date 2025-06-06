@@ -185,7 +185,7 @@ python src/main.py
 ### Step 9: Access Swagger API & Documentation
 
 - **Swagger API**: [http://localhost:8001/docs](http://localhost:8001/docs)
-- **API Documentation**: [https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html](https://jubilant-couscous-qz6ok42.pages.github.io/redoc.html)
+- **API Documentation**: [https://developers.rws.com/HFTS-api-docs/redoc.html](https://developers.rws.com/HFTS-api-docs/redoc.html)
 <!-- [http://localhost:8001/redoc](http://localhost:8001/redoc) -->
 
 <br>
