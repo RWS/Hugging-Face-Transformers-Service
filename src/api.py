@@ -241,6 +241,12 @@ async def list_models() -> List[ModelInfo]:
     logger.info('GET /v1/models/ - Listing all downloaded models.')
     models_info = []
     try:
+        if not os.path.exists(config.DOWNLOAD_DIRECTORY):
+            logger.warning(
+                f"Models directory '{config.DOWNLOAD_DIRECTORY}' does not exist. Creating it."
+            )
+            os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
+
         model_dirs = [
             d for d in os.listdir(config.DOWNLOAD_DIRECTORY)
             if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))
