@@ -4,7 +4,6 @@ import logging
 from huggingface_hub import HfApi
 from typing import Optional, List
 from datasets import Dataset
-from models import CompletionResponse, ChatCompletionResponse
 import glob
 import re
 import json
@@ -14,19 +13,19 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_MODEL_TYPES = {     
+SUPPORTED_MODEL_TYPES = {
     'sequence-generation': AutoModelForSeq2SeqLM,
     'text-generation': AutoModelForCausalLM
 }
 
 SUPPORTED_PIPELINES = {
     "text-generation",
-    #"text2text-generation",
-    #"summarization",
+    # "text2text-generation",
+    # "summarization",
     "translation"
 }
 
-# Used to infer the model type from the model_type property in the config file 
+# Used to infer the model type from the model_type property in the config file
 # when readme is not present and/or not defined in the pipeline or tags
 # This is not meant to be a definitive list
 MODEL_TYPE_MAPPING = {
@@ -35,9 +34,10 @@ MODEL_TYPE_MAPPING = {
     "mbart": "translation",
     "mistral": "text-generation",
     "qwen2": "text-generation",
-    "t5": "translation",   
+    "t5": "translation",
     "xglm": "text-generation"
 }
+
 
 def get_model_type(task: str):
     if task in ['translation']:
@@ -46,12 +46,6 @@ def get_model_type(task: str):
         return SUPPORTED_MODEL_TYPES['text-generation']
     else:
         raise ValueError(f"Unsupported task: {task}")
-
-def extract_assistant_response_completions(results: CompletionResponse) -> List[str]:
-    return [choice.text for choice in results.choices]
-
-def extract_assistant_response_chat(results: ChatCompletionResponse) -> List[str]:
-    return [choice.message.content for choice in results.choices]
 
 
 def extract_assistant_response(response):
@@ -73,7 +67,7 @@ def extract_assistant_response(response):
                     content = message.get('content')
                     if content:
                         return content.strip()
-        
+
         # Handling for other models that use 'generated_text'
         elif 'generated_text' in response:
             generated_text = response.get('generated_text')
@@ -89,6 +83,7 @@ def extract_assistant_response(response):
     # Fallback: return the entire response as string if expected keys are missing
     return str(response)
 
+
 # async def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
 #     """
 #     Dependency to retrieve the API key from the headers.
@@ -102,37 +97,38 @@ def extract_assistant_response(response):
 def filter_unwanted_files(files):
     """Filter out unwanted files from the download list."""
     unwanted_files = {'.gitattributes', 'USE_POLICY.md'}
-    
+
     # Check for unwanted filenames and exclude those containing '/' or '\'
     return [
-        file for file in files 
+        file for file in files
         if file.rfilename not in unwanted_files and '/' not in file.rfilename and '\\' not in file.rfilename
     ]
+
 
 def infer_model_type(model_path: str) -> str:
     """
     Infer model type based on the presence of *.gguf files, 'README.md', or 'config.json'.
-   
+
     Priority:
     1. Parse 'README.md' for 'pipeline_tag' or 'tags'.
     2. Check for *.gguf files (indicates 'text-generation').
     3. Parse 'config.json' for 'model_type'.
-   
+
     Parameters:
     - model_path (str): The full path to the model directory.
-   
+
     Returns:
     - str: The inferred model type or 'unknown' if unable to determine.
     """
     logger.info(f"Inferring model type for path: {model_path}")
-    
+
     # Parse README.md
     readme_path = os.path.join(model_path, 'README.md')
     if os.path.exists(readme_path):
         try:
             with open(readme_path, 'r', encoding='utf-8') as f:
                 readme_content = f.read()
-           
+
             # Extract pipeline_tag
             pipeline_tag_match = re.search(r'pipeline_tag:\s*(\S+)', readme_content, re.IGNORECASE)
             if pipeline_tag_match:
@@ -140,7 +136,7 @@ def infer_model_type(model_path: str) -> str:
                 if pipeline_tag in SUPPORTED_PIPELINES:
                     logger.info(f"Found pipeline_tag '{pipeline_tag}' in README.md. Model type: '{pipeline_tag}'")
                     return pipeline_tag
-           
+
             # Extract tags
             tags_match = re.search(r'tags:\s*\n((?:\s*-\s*\w+)+)', readme_content, re.IGNORECASE)
             if tags_match:
@@ -153,13 +149,13 @@ def infer_model_type(model_path: str) -> str:
                         return tag_lower
         except Exception as e:
             logger.error(f"Error reading README.md in {model_path}: {e}")
-   
+
     # Check for .gguf files
     gguf_files = glob.glob(os.path.join(model_path, "*.gguf"))
     if gguf_files:
         logger.info(f"Detected .gguf files in {model_path}. Model type: 'text-generation'")
         return "text-generation"
-   
+
     # Parse config.json
     config_path = os.path.join(model_path, 'config.json')
     if os.path.exists(config_path):
@@ -167,20 +163,21 @@ def infer_model_type(model_path: str) -> str:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_file = json.load(f)
                 model_type = config_file.get("model_type", "").lower().strip()
-                
+
                 # Check within 'text_config' if necessary
                 if not model_type and "text_config" in config_file:
                     model_type = config_file["text_config"].get("model_type", "").lower().strip()
-                
+
                 inferred_type = MODEL_TYPE_MAPPING.get(model_type)
                 if inferred_type:
                     logger.info(f"Derived model_type '{model_type}' from config.json. Model type: '{inferred_type}'")
                     return inferred_type
         except Exception as e:
             logger.error(f"Error reading config.json in {model_path}: {e}")
-   
+
     logger.warning(f"Could not determine model type for {model_path}. Defaulting to 'unknown'.")
     return "unknown"
+
 
 def get_directory_size(directory: str) -> int:
     """Calculate the total size of the directory."""
@@ -204,10 +201,10 @@ def format_size(size_bytes: int) -> str:
     """
     Return a human-readable string representation of size in bytes,
     rounded to 0 decimal places.
-    
+
     Parameters:
         size_bytes (int): The size in bytes.
-        
+
     Returns:
         str: Formatted size string with appropriate units.
     """
@@ -215,15 +212,15 @@ def format_size(size_bytes: int) -> str:
     if size_bytes == 0:
         logger.info(f"Formatted size: 0 Bytes")
         return "0 Bytes"
-    
+
     size_units = ['Bytes', 'KB', 'MB', 'GB', 'TB']
     index = 0
     size = float(size_bytes)
-    
+
     while size >= 1024 and index < len(size_units) - 1:
         size /= 1024
         index += 1
-    
+
     formatted_size = f"{size:.0f} {size_units[index]}"
     logger.info(f"Formatted size: {formatted_size}")
     return formatted_size
@@ -240,8 +237,8 @@ def fetch_model_info(model_name: str, api_key: str):
     except Exception as e:
         logger.error(f"Failed to fetch model info for '{model_name}': {e}")
         raise
-   
-    
+
+
 async def get_file_size_via_head(url: str, api_key: str) -> Optional[int]:
     """Retrieve the file size by performing a HEAD request with redirects allowed."""
     logger.info(f"Attempting HEAD request to {url} to get file size.")
@@ -264,6 +261,7 @@ async def get_file_size_via_head(url: str, api_key: str) -> Optional[int]:
     except Exception as e:
         logger.error(f"Failed to fetch size for URL {url}: {e}")
     return None
+
 
 async def get_file_size_via_get(url: str, api_key: str) -> Optional[int]:
     """Retrieve the file size by performing a GET request with Range header."""

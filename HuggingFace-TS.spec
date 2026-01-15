@@ -1,23 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+from pathlib import Path
 import sys
 import os
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, get_package_paths
-# import logging
 
-from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
-
-# Initialize logging for the spec file
-# logging.basicConfig(level=logging.DEBUG)
-# logger = logging.getLogger(__name__)
+import site
+import glob
+from pathlib import Path
+from PyInstaller.building.build_main import Analysis, PYZ, EXE
 
 # Collect dynamic libraries from 'llama_cpp'
-binaries = collect_dynamic_libs('llama_cpp')
-# logger.debug(f'Collected binaries from llama_cpp: {binaries}')
+binaries = []
 
 # Collect data files from 'llama_cpp'
-datas = collect_data_files('llama_cpp')
-# logger.debug(f'Collected data files from llama_cpp: {datas}')
+datas = []
 
 # Additional data files
 additional_datas = [

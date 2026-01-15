@@ -2,18 +2,19 @@
 
 ## Overview
 
-This **Local LLM server** is a Windows service application designed to provide an interface for working with Hugging Face models, specifically catering to translation and text generation tasks.
+This **Local LLM server** is a Windows service application providing a REST API for managing Hugging Face models, with a focus on translation and fine-tuning tasks.
 
-The application is built leveraging FastAPI and Python, and it supports a wide selection of Hugging Face LLMs. It can run either as a local Windows service or be included in a Docker container, enabling users to download and mount models locally.
+The application is built with FastAPI and Python and supports downloading, mounting, unmounting, and deleting models locally. It can run as a Windows service or inside a Docker container, enabling fast and efficient local access to translation models.
+
+> Note: Text generation and completion functionality previously available in this service has been removed and is now handled by LM Studio.
 
 ### Key Features
 
-- **Model Management**: Users can easily download, mount, unmount, and delete Hugging Face models. Once a model is downloaded and mounted, it is accessible for inference locally, allowing for fast and efficient processing without repeated downloads.
-- **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages.
-- **Fine-Tuning**: Facilitate the fine-tuning of pretrained translation models with custom datasets, allowing users to adapt models to specific domains or language nuances.
-- **Text Generation**: Leverage models to generate contextual text based on provided prompts, ideal for translation tasks that require dynamic text generation.
-- **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.
-- **Streaming Progress Updates**: For long-running operations such as downloading models, the application provides real-time progress updates, allowing users to monitor the status of their downloads.
+- **Model Management**: Users can easily download, mount, unmount, and delete Hugging Face models. Once a model is downloaded and mounted, it is accessible for inference locally, allowing for fast and efficient processing without repeated downloads.  
+- **Translation Functionality**: The application includes support for various translation models, enabling users to translate text between multiple languages.  
+- **Fine-Tuning**: Facilitate the fine-tuning of pretrained translation models with custom datasets, allowing users to adapt models to specific domains or language nuances.  
+- **Interoperability**: This service enables developers to connect to the API locally from projects written in other programming languages, such as `.NET` and `Java`. This is particularly useful in environments where direct support for Transformers isn't possible, allowing developers to leverage powerful NLP capabilities without being constrained by language limitations.  
+- **Streaming Progress Updates**: For long-running operations such as downloading models or fine-tuning, the application provides real-time progress updates, allowing users to monitor the status of their tasks.  
 
 ### Supported Models
 
@@ -29,19 +30,7 @@ Below is an overview of the supported models categorized by their primary functi
 
 #### Text Generation Models
 
-| **Model Name**                                       | **Primary Uses**                                                                                      | **Supported Languages**          | **Notes**                                                                                                                                                                                                                      |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **lmstudio-community/Llama-3.2-3B-Instruct-GGUF**    | Instruction-tuned large language model for versatile text generation tasks.                           | Multilingual (primarily English) | Part of the Meta Llama collection, available in 3B, 8B, 70B, and 405B sizes. English, German, French, Italian, Portuguese, Hindi, Spanish, and Thai are officially supported.                                                  |
-| **lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF** | Enhanced text generation with instruction tuning for better contextual understanding.                 | Multilingual (primarily English) | Part of the Meta Llama collection. English, German, French, Italian, Portuguese, Hindi, Spanish, and Thai are officially supported.                                                                                            |
-| **meta-llama/Llama-3.1-8B-Instruct**                 | Instruction-based text generation with improved performance over previous versions.                   | Multilingual (primarily English) | Part of the Meta Llama collection. English, German, French, Italian, Portuguese, Hindi, Spanish, and Thai are officially supported.                                                                                            |
-| **meta-llama/Llama-3.2-3B-Instruct**                 | Advanced conversational tasks and assistant-like interactions.                                        | Multilingual (primarily English) | Part of the Meta Llama collection. English, German, French, Italian, Portuguese, Hindi, Spanish, and Thai are officially supported.                                                                                            |
-| **bartowski/Phi-3.5-mini-instruct-GGUF**             | Lightweight, high-quality text generation with reasoning capabilities. Supports long context lengths. | Multilingual (primarily English) | Supported languages: Arabic, Chinese, Czech, Danish, Dutch, English, Finnish, French, German, Hebrew, Hungarian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese, Russian, Spanish, Swedish, Thai, Turkish, Ukrainian |
-| **microsoft/Phi-3.5-mini-instruct**                  | Similar to Phi-3.5-mini-instruct-GGUF with Microsoft optimizations.                                   | Multilingual (primarily English) | Supported languages: Arabic, Chinese, Czech, Danish, Dutch, English, Finnish, French, German, Hebrew, Hungarian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese, Russian, Spanish, Swedish, Thai, Turkish, Ukrainian |
-| **bartowski/Mistral-Nemo-Instruct-2407-GGUF**        | Instruction fine-tuned large language model with enhanced performance.                                | Multilingual (primarily English) | Jointly trained by Mistral AI and NVIDIA.                                                                                                                                                                                      |
-| **mistralai/Mistral-Nemo-Instruct-2407**             | Instruction fine-tuned version of Mistral-Nemo-Base-2407.                                             | Multilingual (primarily English) | Significantly outperforms existing models of similar size.                                                                                                                                                                     |
-| **google/gemma-2-9b**                                | General-purpose text generation, question answering, summarization, and reasoning.                    | English                          | Lightweight and deployable on limited-resource environments. Open weights available for pre-trained and instruction-tuned variants.                                                                                            |
-| **bartowski/Mistral-7B-Instruct-v0.3-GGUF**          | Instruction fine-tuned model for detailed and context-aware text generation.                          | English                          |                                                                                                                                                                                                                                |
-| **Mistral-7B-Instruct-v0.3**                         | Enhanced instruction-tuned text generation model.                                                     | English                          |                                                                                                                                                                                                                                |
+> Note: Text generation, including chat and completion features, is no longer supported in this service. These functions are now managed by LM Studio.
 
 ### Fine-Tuning Translation Models
 
@@ -90,7 +79,7 @@ Enable users to **fine-tune pretrained translation models** with their own datas
 
 ### Step 1: Check Python & Pip Installation
 
-Ensure Python and pip are installed:
+Ensure Python and pip are installed and that your Python version is compatible with the packages listed in requirements.txt. Python 3.11 is a good choice for this project.
 
 ```bash
 python --version
@@ -132,11 +121,7 @@ To deactivate:
 deactivate
 ```
 
-### Step 5: Install Microsoft Visual C++ Redistributables
-
-These redistributables provide essential runtime components required by the application. You can download the latest supported versions directly from Microsoft's official [latest supported Visual C++ downloads](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
-
-### Step 6: Install Required Packages
+### Step 5: Install Required Packages
 
 Install the dependencies listed in `requirements.txt`:
 
@@ -144,7 +129,7 @@ Install the dependencies listed in `requirements.txt`:
 pip install --no-cache-dir -r requirements.txt
 ```
 
-### Step 7: Configure Environment Variables
+### Step 6: Configure Environment Variables
 
 To connect to Hugging Face and manage model caching, you'll need to set up your environment variables.
 
@@ -174,7 +159,7 @@ PORT=8001
 
 Ensure you save the changes to the `.env` file before proceeding to run the application. This configuration is essential for the application to access Hugging Face models effectively and to run the Local LLM server on the specified port.
 
-### Step 8: Start the Local LLM Server
+### Step 7: Start the Local LLM Server
 
 Run the Local LLM server:
 
@@ -182,7 +167,7 @@ Run the Local LLM server:
 python src/main.py
 ```
 
-### Step 9: Access Swagger API & Documentation
+### Step 8: Access Swagger API & Documentation
 
 - **Swagger API**: [http://localhost:8001/docs](http://localhost:8001/docs)
 - **API Documentation**: [https://developers.rws.com/HFTS-api-docs/redoc.html](https://developers.rws.com/HFTS-api-docs/redoc.html)
@@ -229,10 +214,10 @@ HuggingFace-TS.exe
 - `POST /v1/model/unmount`: Unmount the currently mounted model to free up resources.
 - `POST /v1/model/fine-tune`: Initiate the fine-tuning of a specified translation model with custom parameters and data. Receive real-time progress updates via WebSocket.
 - `POST /v1/translate`: Translate input text using the mounted translation model.
-- `POST /v1/completions`: Generate text based on the input prompt using the specified text generation model.
-- `POST /v1/chat/completions`: Generate chat-style completion using the specified text generation model.
 - `WS /v1/ws/progress/{client_id}`: Establish a WebSocket connection to receive real-time progress updates for model download operations.
 
+> **Deprecated / No Longer Supported**:
+> - `POST /v1/completions` and `POST /v1/chat/completions`: Text generation and chat completion functionality has been removed from this service and is now handled by LM Studio.
 ### Notes
 
 Ensure to monitor download progress through the associated API endpoints and handle errors according to the status returned.

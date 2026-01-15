@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Header, Query, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from huggingface_hub import hf_hub_url
-from models import ResponseType, FineTuneRequest, DeleteModelResponse, TranslationRequest, TranslationResponse, CompletionChoice, CompletionRequest, ChatCompletionChoice, CompletionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelRequest, ModelInfo, MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesResponse, TranslationRequest, ModelInfoResponse, DownloadDirectoryResponse
+from models import FineTuneRequest, DeleteModelResponse, TranslationResponse, ModelRequest, ModelInfo, \
+    MountModelRequest, DownloadModelRequest, ModelFileInfo, LocalModel, ListModelFilesResponse, TranslationRequest, \
+    ModelInfoResponse, DownloadDirectoryResponse
 from state import model_state
 from connection_manager import ConnectionManager
-from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, get_model_type, fetch_model_info
+from helpers import get_file_size_via_head, get_file_size_via_get, infer_model_type, get_directory_size, format_size, \
+    get_model_type, fetch_model_info
 from config import config
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState, Seq2SeqTrainingArguments
-from llama_cpp import Llama
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoModel, AutoConfig, Trainer, \
+    TrainingArguments, pipeline, TrainerCallback, TrainerControl, TrainerState, Seq2SeqTrainingArguments
 import glob
 import os
 from typing import Optional, Dict, List
@@ -33,9 +36,10 @@ manager = ConnectionManager()
 model_states: Dict[str, Dict] = {}
 executor = ThreadPoolExecutor(max_workers=8)
 
+
 @router.on_event("startup")
 async def startup_event():
-    torch.set_num_threads(model_state.cpu_cores)    
+    torch.set_num_threads(model_state.cpu_cores)
     logger.info(f"PyTorch is set to use {model_state.cpu_cores} threads.")
     logger.info(f"Server host: {config.HOST}")
     logger.info(f"Server port: {config.PORT}")
@@ -48,13 +52,15 @@ async def startup_event():
     else:
         logger.info("Hugging Face API token is set.")
 
+
 @router.on_event("shutdown")
 async def shutdown_event():
     print("Shutting down the server.")
 
 
 @router.get("/model/directory", response_model=DownloadDirectoryResponse)
-def get_download_path(model_name: str = Query(None, description="Name of the model to include in the path")) -> DownloadDirectoryResponse:
+def get_download_path(model_name: str = Query(None,
+                                              description="Name of the model to include in the path")) -> DownloadDirectoryResponse:
     """
     Retrieve the current download directory.
     If `model_name` is provided and not empty, include it in the path.
@@ -74,14 +80,14 @@ def get_download_path(model_name: str = Query(None, description="Name of the mod
     else:
         logger.info(f"Download Directory without specific model: '{download_dir}'")
         return DownloadDirectoryResponse(path=download_dir)
-    
+
 
 @router.get(
     "/model/files",
     summary="List Model Files",
     description=(
-        "Retrieves the list of available files in the specified Hugging Face model repository, "
-        "including each file's size when available. Only files in the root directory are listed."
+            "Retrieves the list of available files in the specified Hugging Face model repository, "
+            "including each file's size when available. Only files in the root directory are listed."
     ),
     response_model=ListModelFilesResponse,
     responses={
@@ -107,8 +113,8 @@ def get_download_path(model_name: str = Query(None, description="Name of the mod
     },
 )
 async def list_model_files_endpoint(
-    model_name: str = Query(..., description="Name of the Hugging Face model repository"),
-    api_key: Optional[str] = Header(None, description="Hugging Face API key"),
+        model_name: str = Query(..., description="Name of the Hugging Face model repository"),
+        api_key: Optional[str] = Header(None, description="Hugging Face API key"),
 ) -> ListModelFilesResponse:
     """
     Retrieves the list of available files in the specified Hugging Face model repository,
@@ -116,7 +122,7 @@ async def list_model_files_endpoint(
     """
     logger.info('GET /v1/model/files - Listing model files.')
     effective_api_key = api_key if api_key else config.HUGGINGFACE_TOKEN
-    
+
     if not model_name:
         logger.warning("list_model_files_endpoint called without 'model_name'.")
         raise HTTPException(status_code=400, detail="`model_name` must be provided.")
@@ -187,7 +193,8 @@ async def list_model_files_endpoint(
         error_message = f"Error fetching files for model '{model_name}': {str(e)}"
         logger.error(f"Exception: {error_message}")
         raise HTTPException(status_code=400, detail=error_message)
-    
+
+
 @router.get(
     "/models",
     response_model=List[ModelInfo],
@@ -220,7 +227,7 @@ async def list_model_files_endpoint(
                                 "Marco-o1-IQ2_M.gguf",
                                 "Marco-o1-Another.gguf"
                             ],
-                            "loaded_file_name": "Marco-o1-IQ2_M.gguf" 
+                            "loaded_file_name": "Marco-o1-IQ2_M.gguf"
                         }
                     ]
                 }
@@ -230,34 +237,41 @@ async def list_model_files_endpoint(
 )
 async def list_models() -> List[ModelInfo]:
     """List all downloaded models along with their types, sizes, properties, and mounted files."""
-    
+
     logger.info('GET /v1/models/ - Listing all downloaded models.')
     models_info = []
     try:
+        if not os.path.exists(config.DOWNLOAD_DIRECTORY):
+            logger.warning(
+                f"Models directory '{config.DOWNLOAD_DIRECTORY}' does not exist. Creating it."
+            )
+            os.makedirs(config.DOWNLOAD_DIRECTORY, exist_ok=True)
+
         model_dirs = [
             d for d in os.listdir(config.DOWNLOAD_DIRECTORY)
             if os.path.isdir(os.path.join(config.DOWNLOAD_DIRECTORY, d))
         ]
         logger.info(f"Found {len(model_dirs)} directories in download path '{config.DOWNLOAD_DIRECTORY}'.")
-        
+
         for model_dir in model_dirs:
             # Skip any directories that start with '.' or are named '.locks'
             if model_dir.startswith('.') or model_dir == '.locks':
                 logger.info(f"Skipping directory '{model_dir}' based on naming convention.")
                 continue
-            
+
             model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_dir)
             model_name = model_dir.replace('--', '/').replace("models/", "")  # Normalize model name
 
             model_type = infer_model_type(model_path)
-            model_size = get_directory_size(model_path)  # Calculate total size        
+            model_size = get_directory_size(model_path)  # Calculate total size
             formatted_size = format_size(model_size)
             is_mounted = any(
                 model.model_name == model_name for model in model_state.models
             )
-            
-            logger.info(f"Processing model '{model_name}': Type='{model_type}', Size='{formatted_size}', Mounted={is_mounted}")
-            
+
+            logger.info(
+                f"Processing model '{model_name}': Type='{model_type}', Size='{formatted_size}', Mounted={is_mounted}")
+
             # Retrieve properties from the mounted models
             properties = {}
             loaded_file_name = None
@@ -268,8 +282,9 @@ async def list_models() -> List[ModelInfo]:
                 if local_model:
                     properties = local_model.properties
                     loaded_file_name = local_model.file_name  # the loaded gguf file name
-                    logger.info(f"Model '{model_name}' is mounted with properties: {properties} and loaded_file_name: {loaded_file_name}")
-            
+                    logger.info(
+                        f"Model '{model_name}' is mounted with properties: {properties} and loaded_file_name: {loaded_file_name}")
+
             file_names = None
             if model_type == 'text-generation':
                 gguf_files_full = glob.glob(os.path.join(model_path, "*.[gG][gG][uU][fF]"))
@@ -279,7 +294,7 @@ async def list_models() -> List[ModelInfo]:
                     logger.info(f"Found gguf files for model '{model_name}': {file_names}")
                 else:
                     logger.info(f"No gguf files found for model '{model_name}'.")
-            
+
             models_info.append(ModelInfo(
                 model_name=model_name,
                 model_type=model_type,
@@ -292,18 +307,19 @@ async def list_models() -> List[ModelInfo]:
     except Exception as e:
         logger.error(f"Error accessing model cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error accessing model cache: {str(e)}")
-    
+
     logger.info(f"Successfully listed {len(models_info)} models.")
     return models_info
+
 
 @router.post(
     "/model/download",
     summary="Download a Model",
     description=(
-        "Initiates the download of a specified model from the Hugging Face Hub. "
-        "If the model is already downloaded, it overwrites existing files. "
-        "Users can specify which files to download. "
-        "If no files are specified, all files from the model will be downloaded."
+            "Initiates the download of a specified model from the Hugging Face Hub. "
+            "If the model is already downloaded, it overwrites existing files. "
+            "Users can specify which files to download. "
+            "If no files are specified, all files from the model will be downloaded."
     ),
     response_model=dict,
     responses={
@@ -324,9 +340,9 @@ async def list_models() -> List[ModelInfo]:
     }
 )
 async def download_model_endpoint(
-    request: DownloadModelRequest,
-    background_tasks: BackgroundTasks,
-    api_key: Optional[str] = Header(None, description="Hugging Face API key") 
+        request: DownloadModelRequest,
+        background_tasks: BackgroundTasks,
+        api_key: Optional[str] = Header(None, description="Hugging Face API key")
 ) -> dict:
     client_id = request.client_id
     model_name = request.model_name
@@ -379,21 +395,22 @@ async def download_model_endpoint(
         "message": f"Model '{model_name}' is being downloaded."
     }
 
+
 async def download_model(
-    client_id: str,
-    model_name: str,
-    api_key: Optional[str],
-    files_to_download: Optional[List[str]] = None
+        client_id: str,
+        model_name: str,
+        api_key: Optional[str],
+        files_to_download: Optional[List[str]] = None
 ):
     try:
         logger.info(f"Starting download process for client {client_id}, model {model_name}")
         model_state = model_states[client_id]
         model_state["download_progress"]["status"] = "Download started."
-                    
+
         info = await asyncio.to_thread(fetch_model_info, model_name, api_key=api_key)
-        
+
         available_files = [file.rfilename for file in info.siblings]
-        
+
         if files_to_download:
             invalid_files = [f for f in files_to_download if f not in available_files]
             if invalid_files:
@@ -416,7 +433,7 @@ async def download_model(
             logger.info(
                 f"Client {client_id}: No specific files requested. Downloading all {len(filtered_files)} files."
             )
-        
+
         total_files = len(filtered_files)
         if total_files == 0:
             error_message = "No files available to download."
@@ -430,7 +447,7 @@ async def download_model(
                 })
             )
             return
-        
+
         model_state["download_progress"].update({
             "status": "Downloading",
             "message": "Downloading started.",
@@ -438,10 +455,10 @@ async def download_model(
             "overall_progress": "0.00%"
         })
         logger.info(f"Model {model_name} has {total_files} files to download.")
-        
+
         # Determine the default branch
-        #default_branch = info.default_branch if hasattr(info, 'default_branch') and info.default_branch else info.sha
-        
+        # default_branch = info.default_branch if hasattr(info, 'default_branch') and info.default_branch else info.sha
+
         # Calculate total size for overall progress
         total_size = 0
         file_sizes = {}
@@ -451,12 +468,12 @@ async def download_model(
                     file_sizes[file.rfilename] = file.size
                     total_size += file.size
                 else:
-                    file_sizes[file.rfilename] = None 
-        
+                    file_sizes[file.rfilename] = None
+
         downloaded_total = 0
-        
+
         for index, filename in enumerate(filtered_files):
-            
+
             # check if cancel requested
             if model_state.get("cancel_requested"):
                 logger.info(f"Client {client_id}: Cancellation requested. Stopping download.")
@@ -468,9 +485,9 @@ async def download_model(
                         "type": "cancelled",
                         "data": "Download was cancelled."
                     })
-                )               
-                return 
-                       
+                )
+                return
+
             try:
                 start_message = {
                     "file_name": filename,
@@ -485,18 +502,18 @@ async def download_model(
                         "data": start_message
                     })
                 )
-                                
+
                 logger.info(
                     f"Client {client_id}: Downloading file {filename} ({index + 1}/{total_files})"
                 )
-                                               
+
                 download_url = hf_hub_url(
                     repo_id=model_name,
                     filename=filename
-                    #revision=default_branch
+                    # revision=default_branch
                 )
-                
-                destination_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'), filename)                
+
+                destination_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'), filename)
                 # Start downloading the file with progress tracking
                 await download_file(
                     download_url=download_url,
@@ -505,11 +522,11 @@ async def download_model(
                     filename=filename,
                     token=api_key if api_key else config.HUGGINGFACE_TOKEN
                 )
-                
+
                 logger.info(
                     f"Client {client_id}: Successfully downloaded {filename}"
                 )
-                
+
                 progress_update = {
                     "file_name": filename,
                     "index": index + 1,
@@ -520,7 +537,7 @@ async def download_model(
                 model_state["download_progress"]["message"] = (
                     f"Downloaded {index + 1} of {total_files} files."
                 )
-                
+
                 await manager.send_message(
                     client_id,
                     json.dumps({
@@ -528,14 +545,14 @@ async def download_model(
                         "data": progress_update
                     })
                 )
-                
+
                 # Update overall progress
                 file_size = file_sizes.get(filename)
                 if file_size:
                     downloaded_total += file_size
                     overall_progress = (downloaded_total / total_size) * 100 if total_size else 0
                     model_state["download_progress"]["overall_progress"] = f"{overall_progress:.2f}%"
-                    
+
                     await manager.send_message(
                         client_id,
                         json.dumps({
@@ -545,7 +562,7 @@ async def download_model(
                             }
                         })
                     )
-                
+
                 # check if cancel requested
                 if model_state.get("cancel_requested"):
                     logger.info(f"Client {client_id}: Cancellation requested during file download.")
@@ -566,7 +583,7 @@ async def download_model(
                         except Exception as remove_err:
                             logger.warning(f"Failed to remove incomplete file: {remove_err}")
                     return
-                                
+
             except Exception as e:
                 error_message = f"Error downloading {filename}: {str(e)}"
                 model_state["download_progress"]["error"] = error_message
@@ -579,7 +596,7 @@ async def download_model(
                     })
                 )
                 break  # Stop downloading on error
-        
+
         if not model_state["download_progress"]["error"]:
             model_state["download_progress"].update({
                 "status": "Completed",
@@ -594,19 +611,20 @@ async def download_model(
                     "data": f"Model '{model_name}' download completed."
                 })
             )
-            #await asyncio.to_thread(move_snapshot_files, model_name, config.DOWNLOAD_DIRECTORY)
+            # await asyncio.to_thread(move_snapshot_files, model_name, config.DOWNLOAD_DIRECTORY)
     finally:
         model_state["is_downloading"] = False
         logger.info(f"Client {client_id}: Download state reset.")
 
+
 async def download_file(
-    download_url: str,
-    destination_path: str,
-    client_id: str,
-    filename: str,
-    token: Optional[str] = None,
-    chunk_size: int = 5 * 1024 * 1024  # 5MB
-    #chunk_size: int = 8 * 1024  # 8KB
+        download_url: str,
+        destination_path: str,
+        client_id: str,
+        filename: str,
+        token: Optional[str] = None,
+        chunk_size: int = 5 * 1024 * 1024  # 5MB
+        # chunk_size: int = 8 * 1024  # 8KB
 ):
     """
     Download a file from the given URL to the destination path,
@@ -642,7 +660,7 @@ async def download_file(
                 async with aiofiles.open(destination_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         if chunk:
-                            
+
                             # Check if cancel was requested
                             if model_states.get(client_id, {}).get("cancel_requested"):
                                 logger.info(f"Client {client_id}: Cancellation requested. Aborting file download.")
@@ -662,7 +680,6 @@ async def download_file(
                                     except Exception as remove_err:
                                         logger.warning(f"Failed to remove incomplete file: {remove_err}")
                                 return  # Exit the download_file function
-
 
                             await f.write(chunk)
                             downloaded += len(chunk)
@@ -700,7 +717,7 @@ async def download_file(
             await manager.send_message(client_id, json.dumps(error_data))
         except Exception as send_err:
             logger.warning(f"Failed to send error message: {send_err}")
-        
+
         # Clean up partial downloads
         if os.path.exists(destination_path):
             try:
@@ -709,6 +726,7 @@ async def download_file(
             except Exception as remove_err:
                 logger.warning(f"Failed to remove incomplete file: {remove_err}")
         raise
+
 
 @router.websocket("/ws/progress/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -725,7 +743,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     # Send acknowledgment
                     await manager.send_message(client_id, json.dumps({"type": "heartbeat_ack"}))
                 elif data == "cancel":
-                    logger.info(f"Cancellation request received from {client_id}")                    
+                    logger.info(f"Cancellation request received from {client_id}")
                     model_states[client_id]["cancel_requested"] = True
                     await manager.send_message(
                         client_id,
@@ -733,7 +751,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                             "type": "cancellation_ack",
                             "data": "Cancellation requested. Stopping process..."
                         })
-                    )              
+                    )
                 else:
                     logger.info(f"Received message from {client_id}: {data}")
             except WebSocketDisconnect:
@@ -755,8 +773,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     "/model/mount",
     summary="Mount a Model",
     description=(
-        "Mount the specified model and setup the appropriate pipeline. "
-        "Supported model types: 'translation', 'text-generation'."
+            "Mount the specified model and setup the appropriate pipeline. "
+            "Supported model types: 'translation', 'text-generation'."
     ),
     response_model=dict,
     responses={
@@ -797,7 +815,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 )
 async def mount_model(request: MountModelRequest) -> dict:
     """Mount the specified model."""
-    
+
     logger.info("POST /v1/model/mount - Mount model request received.")
     model_name = request.model_name
     properties = request.properties or {}
@@ -807,7 +825,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     if any(model.model_name == model_name for model in model_state.models):
         logger.warning(f"Model '{model_name}' is already mounted.")
         return {"message": f"Model '{model_name}' is already mounted."}
-    
+
     # Construct the model path based on the model name
     model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
     logger.info(f"Resolved model path: {model_path}")
@@ -815,7 +833,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     if not os.path.exists(model_path):
         logger.error(f"Model path '{model_path}' does not exist.")
         raise HTTPException(status_code=404, detail="Model path does not exist.")
-    
+
     requested_model_type = infer_model_type(model_path)
 
     logger.info(
@@ -831,16 +849,16 @@ async def mount_model(request: MountModelRequest) -> dict:
         if requested_model_type == 'translation':
             logger.info(f"Loading translation model '{model_name}' from '{model_path}'.")
             model = get_model_type(requested_model_type).from_pretrained(
-                model_path, 
+                model_path,
                 torch_dtype=torch.float16 if model_state.device == "cuda" else torch.float32,
-                #low_cpu_mem_usage=True  # Optimize memory usage during loading
+                # low_cpu_mem_usage=True  # Optimize memory usage during loading
             )
             model.to(model_state.device)
-            
+
             # Consider enabling quantization for translation models if applicable
             # model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
             # logger.info(f"Model '{model_name}' has been quantized for optimization.")
-            
+
             tokenizer = AutoTokenizer.from_pretrained(model_path)
 
             # Prepare pipeline keyword arguments
@@ -862,77 +880,10 @@ async def mount_model(request: MountModelRequest) -> dict:
             )
             logger.info(f"Translation pipeline for model '{model_name}' has been set up successfully.")
 
-        elif requested_model_type == "text-generation":
-            logger.info(f"Preparing to load text-generation model '{model_name}'.")
-            if specified_file_name:
-                # Verify that the specified *.gguf file exists and has a .gguf extension
-                gguf_file_path = os.path.join(model_path, specified_file_name)
-                logger.info(f"Specified gguf file path: {gguf_file_path}")
-
-                if not os.path.exists(gguf_file_path):
-                    logger.error(f"The specified *.gguf file '{specified_file_name}' does not exist in the model directory.")
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"The specified *.gguf file '{specified_file_name}' does not exist in the model directory."
-                    )
-                if not specified_file_name.lower().endswith(".gguf"):
-                    logger.error(f"The specified file '{specified_file_name}' does not have a '.gguf' extension.")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"The specified file '{specified_file_name}' does not have a '.gguf' extension."
-                    )
-                
-                # Load the text-generation model using llama_cpp
-                logger.info(f"Loading text-generation model '{model_name}' with gguf file '{specified_file_name}'.")
-                model = Llama.from_pretrained(
-                    repo_id=model_name,
-                    filename=specified_file_name,
-                    local_dir=model_path,
-                    verbose=False
-                )
-                logger.info(f"Text-generation model '{model_name}' loaded successfully with gguf file.")
-
-                trans_pipeline = None
-                tokenizer = None
-            else:
-                logger.info(f"Loading text-generation model '{model_name}' without specifying a gguf file.")
-                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-                if tokenizer.pad_token is None:
-                    tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
-                    logger.warning("pad_token was not set. Assigned pad_token to eos_token.")
-                
-                model = get_model_type(requested_model_type).from_pretrained(
-                    model_path, 
-                    trust_remote_code=True, 
-                    torch_dtype=torch.float16 if model_state.device == "cuda" else torch.float32,
-                    #low_cpu_mem_usage=True  # Optimize memory usage during loading
-                )
-                model.to(model_state.device)
-                
-                # Apply dynamic quantization to reduce model size and potentially speed up inference
-                # model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
-                # logger.info(f"Model '{model_name}' has been dynamically quantized for optimization.")
-                
-                # Update model configuration with the pad_token_id
-                model.config.pad_token_id = tokenizer.pad_token_id
-                logger.info(f"Set model's pad_token_id to {tokenizer.pad_token_id}.")
-                              
-                model.resize_token_embeddings(len(tokenizer))
-                logger.info(f"Resized token embeddings to match tokenizer length: {len(tokenizer)}.")
-
-                trans_pipeline = pipeline(
-                    requested_model_type,
-                    model=model,
-                    tokenizer=tokenizer,
-                    torch_dtype=torch.float16 if model_state.device == "cuda" else torch.float32,
-                    device_map="auto",
-                    num_workers=model_state.cpu_cores
-                )
-                logger.info(f"Text-generation pipeline for model '{model_name}' has been set up successfully.")
         else:
             logger.error(f"Unsupported model type provided: '{requested_model_type}'.")
             raise HTTPException(status_code=400, detail="Unsupported model type provided.")
-    
+
     except HTTPException as http_exc:
         # Re-raise HTTP exceptions to be handled by FastAPI
         logger.error(f"HTTPException during model mounting: {http_exc.detail}")
@@ -940,7 +891,7 @@ async def mount_model(request: MountModelRequest) -> dict:
     except Exception as ex:
         logger.error(f"Error loading model '{model_name}': {str(ex)}")
         raise HTTPException(status_code=500, detail=f"Error loading model: {str(ex)}")
-    
+
     # Create and store the local model instance
     local_model = LocalModel(
         model_name=model_name,
@@ -953,60 +904,62 @@ async def mount_model(request: MountModelRequest) -> dict:
     )
     model_state.models.append(local_model)
     logger.info(f"Model '{model_name}' of type '{requested_model_type}' mounted successfully.")
-    
+
     response = {
         "message": f"Model '{request.model_name}' of type '{requested_model_type}' mounted successfully."
     }
     if properties:
         response["properties"] = properties
         logger.info(f"Mount model response properties: {properties}")
-    
+
     return response
 
 
 @router.post("/model/unmount",
-          summary="Unmount Model",
-          description="Unmount the mounted model to free up resources.",
-          response_model=dict,
-          responses={200: {"content": {"application/json": {"example": {"message": "Model unmounted successfully."}}}}})
+             summary="Unmount Model",
+             description="Unmount the mounted model to free up resources.",
+             response_model=dict,
+             responses={
+                 200: {"content": {"application/json": {"example": {"message": "Model unmounted successfully."}}}}})
 async def unmount_model(request: ModelRequest) -> dict:
     """Unmounts the specified model and frees up resources."""
-    
+
     logger.info("POST /v1/model/unmount - Unmount model request received.")
     model_name = request.model_name
     logger.info(f"Model to unmount: {model_name}")
     model_to_unmount = next((model for model in model_state.models if model.model_name == model_name), None)
-    
+
     if model_to_unmount is None:
         logger.warning(f"Attempted to unmount non-existent model '{model_name}'.")
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not currently mounted.")
-    
+
     try:
         # Free resources based on device
         if model_state.device == 'cuda' and model_to_unmount.model.device.type == 'cuda':
             model_to_unmount.model.cpu()  # Move model to CPU to free GPU memory
             torch.cuda.empty_cache()
             logger.info(f"Model '{model_name}' moved to CPU and GPU cache cleared.")
-        
+
         # Remove the model from the global models list
         model_state.models.remove(model_to_unmount)
         logger.info(f"Model '{model_name}' has been unmounted and removed from the global models list.")
-        
+
         # Explicitly delete model and tokenizer to free memory
         del model_to_unmount.model
         del model_to_unmount.tokenizer
         del model_to_unmount.pipeline
         logger.info(f"Resources for model '{model_name}' have been released.")
-        
+
         import gc
         gc.collect()
         logger.info("Garbage collector invoked to free up memory.")
-    
+
     except Exception as e:
         logger.error(f"Error unmounting model '{model_name}': {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error unmounting model: {str(e)}")
-    
+
     return {"message": f"Model '{model_name}' unmounted successfully."}
+
 
 @router.delete(
     "/model/delete",
@@ -1028,7 +981,7 @@ async def unmount_model(request: ModelRequest) -> dict:
     },
 )
 async def delete_model(
-    model_name: str = Query(..., description="Name of the Hugging Face model repository"),
+        model_name: str = Query(..., description="Name of the Hugging Face model repository"),
 ) -> DeleteModelResponse:
     """
     Delete a previously mounted model and its resources based on the provided `model_name`.
@@ -1042,24 +995,25 @@ async def delete_model(
         logger.info(f"Model '{model_name}' is currently mounted. Attempting to unmount before deletion.")
         try:
             # Unmount the model first to free resources
-            if model_state.device == 'cuda' and hasattr(model_to_delete.model, 'device') and model_to_delete.model.device.type == 'cuda':
+            if model_state.device == 'cuda' and hasattr(model_to_delete.model,
+                                                        'device') and model_to_delete.model.device.type == 'cuda':
                 model_to_delete.model.cpu()  # Move model to CPU to free GPU memory
                 torch.cuda.empty_cache()
                 logger.info(f"Model '{model_name}' moved to CPU and GPU cache cleared.")
-            
+
             # Remove the model from the global models list
             model_state.models.remove(model_to_delete)
             logger.info(f"Model '{model_name}' has been removed from the global models list.")
-            
+
             # Explicitly delete model and tokenizer to free memory
             del model_to_delete.model
             del model_to_delete.tokenizer
             del model_to_delete.pipeline
             logger.info(f"Resources for model '{model_name}' have been released.")
-            
+
             gc.collect()
             logger.info("Garbage collector invoked to free up memory.")
-        
+
         except Exception as e:
             logger.error(f"Error unmounting model '{model_name}' before deletion: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error unmounting model before deletion: {str(e)}")
@@ -1090,7 +1044,7 @@ async def delete_model(
             status_code=500,
             detail=f"An error occurred while deleting the model: {str(e)}"
         )
-    
+
 
 @router.post(
     "/translation",
@@ -1100,29 +1054,30 @@ async def delete_model(
 )
 async def translate(translation_request: TranslationRequest) -> TranslationResponse:
     """Translate input text using the specified translation model."""
-    
+
     logger.info("POST /v1/translation - Translation request received.")
     model_to_use = next(
         (model for model in model_state.models if model.model_name == translation_request.model_name), None
     )
-    
+
     if not model_to_use or not model_to_use.pipeline:
-        logger.warning(f"Translation model '{translation_request.model_name}' is not mounted or pipeline is unavailable.")
+        logger.warning(
+            f"Translation model '{translation_request.model_name}' is not mounted or pipeline is unavailable.")
         raise HTTPException(
             status_code=400,
             detail="The specified translation model is not currently mounted."
         )
-    
+
     input_text = translation_request.text
     logger.info(f"Input text for translation: {input_text}")
-    try:       
+    try:
         translated_outputs = model_to_use.pipeline(
             input_text,
             batch_size=8,
             truncation=True
         )
         logger.info(f"Translation result for model '{translation_request.model_name}': {translated_outputs}")
-        
+
         if isinstance(translated_outputs, list) and len(translated_outputs) > 0:
             translated_text = translated_outputs[0].get('translation_text', '')
             logger.info(f"Extracted translated text: {translated_text}")
@@ -1147,264 +1102,6 @@ async def translate(translation_request: TranslationRequest) -> TranslationRespo
         )
 
 
-@router.post(
-    "/completions",
-    summary="Generate Text Completion",
-    description="Generate text based on the input prompt using the specified text generation model.",
-    response_model=CompletionResponse
-)
-async def completions(completion_request: CompletionRequest) -> CompletionResponse:
-    """Generate text completion using the specified text generation model."""
-    
-    logger.info("POST /v1/completions - Text completion request received.")
-    model_to_use = next(
-        (
-            model for model in model_state.models
-            if model.model_name == completion_request.model_name
-        ),
-        None
-    )
-    
-    if not model_to_use:
-        logger.warning(f"Text generation model '{completion_request.model_name}' is not mounted.")
-        raise HTTPException(
-            status_code=400,
-            detail="The specified text generation model is not currently mounted."
-        )
-    
-    prompt = completion_request.prompt
-    max_tokens = completion_request.max_tokens
-    temperature = completion_request.temperature
-    top_p = completion_request.top_p
-    n = completion_request.n
-    stop = completion_request.stop
-    echo = completion_request.echo
-    best_of = completion_request.best_of
-    response_type = completion_request.response_type
-    
-    logger.info(
-        f"Generation parameters - Model: {completion_request.model_name}, "
-        f"Max Tokens: {max_tokens}, Temperature: {temperature}, Top P: {top_p}, "
-        f"Number of Completions: {n}, Best Of: {best_of}, Echo: {echo}, Stop Sequences: {stop}, "
-        f"Response Type: {response_type}"
-    )
-    
-    try:
-        is_llama_model = (
-            model_to_use.file_name is not None and
-            model_to_use.file_name.lower().endswith(".gguf")
-        )
-        logger.info(f"Is LLaMA model (.gguf): {is_llama_model}")
-        
-        if is_llama_model and model_to_use.model:        
-            generated_results = model_to_use.model.create_completion(
-                prompt=prompt,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            logger.info(f"Generated results using LLaMA model '{completion_request.model_name}': {generated_results}")
-            
-            # Assume generated_results is a string
-            choices = [
-                CompletionChoice(
-                    text=generated_results.strip(),
-                    index=i,
-                    finish_reason="stop" if stop else None
-                )
-                for i in range(n)
-            ]
-        else:
-            if max_tokens <= 0:
-                max_tokens = model_to_use.pipeline.max_length or 500
-                logger.info(f"Max tokens <= 0. Set to model's max_length: {max_tokens}")
-           
-           
-            generated_outputs = model_to_use.pipeline(
-                prompt,
-                max_length=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                num_return_sequences=n,
-                stopping_criteria=stop  
-            )
-            logger.info(f"Generated results with plain prompt: {generated_outputs}")
-            
-            choices = []
-            for i, output in enumerate(generated_outputs):
-                generated_text = output.get('generated_text', '').strip()
-                if not generated_text:
-                    generated_text = output.get('text', '').strip()
-                
-                choices.append(
-                    CompletionChoice(
-                        text=generated_text,
-                        index=i,
-                        logprobs=output.get('logprobs', None),
-                        finish_reason="stop" if stop else None
-                    )
-                )
-          
-        if response_type == ResponseType.assistant:        
-            first_choice = choices[0] if choices else None
-            generated_text = first_choice.text if first_choice else ""
-            response = CompletionResponse(
-                id=str(uuid.uuid4()),
-                object="text_completion",
-                model=model_to_use.model_name,
-                generated_text=generated_text
-            )
-        else:
-            response = CompletionResponse(
-                id=str(uuid.uuid4()),
-                object="text_completion",
-                model=model_to_use.model_name,
-                choices=choices
-            )
-        
-        logger.info(f"Completion response: {response}")
-        return response
-    except Exception as e:
-        logger.error(f"Error generating text completion with model '{completion_request.model_name}': {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating text completion: {str(e)}"
-        )
-
-@router.post(
-    "/chat/completions",
-    summary="Generate Chat Completion",
-    description="Generate chat-style completion using the specified text generation model.",
-    response_model=ChatCompletionResponse
-)
-async def chat_completions(chat_request: ChatCompletionRequest) -> ChatCompletionResponse:
-    """Generate chat-style completion using the specified text generation model."""
-    
-    logger.info("POST /v1/chat/completions - Chat completion request received.")
-    model_to_use = next(
-        (
-            model for model in model_state.models
-            if model.model_name == chat_request.model_name
-        ),
-        None
-    )
-    
-    if not model_to_use:
-        logger.warning(f"Chat generation model '{chat_request.model_name}' is not mounted.")
-        raise HTTPException(
-            status_code=400,
-            detail="The specified chat generation model is not currently mounted."
-        )
-    
-    messages = chat_request.messages
-    max_tokens = chat_request.max_tokens
-    temperature = chat_request.temperature
-    top_p = chat_request.top_p
-    n = chat_request.n
-    stop = chat_request.stop
-    response_type = chat_request.response_type
-    
-    logger.info(
-        f"Generation parameters - Model: {chat_request.model_name}, "
-        f"Max Tokens: {max_tokens}, Temperature: {temperature}, Top P: {top_p}, "
-        f"Number of Completions: {n}, Stop Sequences: {stop}, Response Type: {response_type}"
-    )
-    
-    try:
-        is_llama_model = (
-            model_to_use.file_name is not None and
-            model_to_use.file_name.lower().endswith(".gguf")
-        )
-        logger.info(f"Is LLaMA model (.gguf): {is_llama_model}")
-        
-        if is_llama_model and model_to_use.model:
-            generated_results = model_to_use.model.create_chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            logger.info(f"Generated results using LLaMA model '{chat_request.model_name}': {generated_results}")
-            
-            choices = []
-            choices_data = generated_results.get('choices', [])
-            
-            for i, choice in enumerate(choices_data):
-                message = choice.get('message', {})
-                assistant_content = message.get('content', '').strip()
-                
-                if not assistant_content:
-                    logger.warning("Assistant's message content is empty or not found.")
-                    assistant_content = ""
-                
-                choices.append(
-                    ChatCompletionChoice(
-                        message=ChatMessage(
-                            role="assistant",
-                            content=assistant_content
-                        ),
-                        index=i,
-                        finish_reason=choice.get('finish_reason')
-                    )
-                )
-        else:
-            if max_tokens <= 0:
-                max_tokens = model_to_use.pipeline.max_length or 500
-                logger.info(f"Max tokens <= 0. Set to model's max_length: {max_tokens}")
-                     
-            generated_outputs = model_to_use.pipeline(
-                messages,
-                max_length=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                num_return_sequences=n,
-                stopping_criteria=stop 
-            )
-            logger.info(f"Generated results with chat messages: {generated_outputs}")
-            
-            choices = []
-            for i, output in enumerate(generated_outputs):
-                generated_text = output.get('generated_text', '').strip()
-                if not generated_text:
-                    logger.warning("Generated text is empty or not found.")
-                    generated_text = ""
-                
-                choices.append(
-                    ChatCompletionChoice(
-                        message=ChatMessage(
-                            role="assistant",
-                            content=generated_text
-                        ),
-                        index=i,
-                        finish_reason=output.get('finish_reason')
-                    )
-                )
-               
-        if response_type == ResponseType.assistant:
-            first_choice = choices[0] if choices else None
-            generated_text = first_choice.message.content if first_choice else ""
-            response = ChatCompletionResponse(
-                id=str(uuid.uuid4()),
-                object="chat_completion",
-                model=model_to_use.model_name,
-                generated_text=generated_text
-            )
-        else:
-            response = ChatCompletionResponse(
-                id=str(uuid.uuid4()),
-                object="chat_completion",
-                model=model_to_use.model_name,
-                choices=choices
-            )
-        
-        logger.info(f"ChatCompletion response: {response}")
-        return response
-    except Exception as e:
-        logger.error(f"Error generating chat completion with model '{chat_request.model_name}': {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating chat completion: {str(e)}"
-        )
-
-
 @router.get(
     "/model/info",
     summary="Retrieve model info",
@@ -1412,17 +1109,18 @@ async def chat_completions(chat_request: ChatCompletionRequest) -> ChatCompletio
     response_model=ModelInfoResponse
 )
 async def get_model_info(
-    model_name: str = Query(..., description="The name of the Hugging Face model"),
-    return_type: str = Query(default="info", description="Specify 'config' to retrieve model configuration or 'info' to retrieve model information."),
-    api_key: Optional[str] = Header(None, description="Hugging Face API key")
+        model_name: str = Query(..., description="The name of the Hugging Face model"),
+        return_type: str = Query(default="info",
+                                 description="Specify 'config' to retrieve model configuration or 'info' to retrieve model information."),
+        api_key: Optional[str] = Header(None, description="Hugging Face API key")
 ):
     """
     Retrieve either model configuration or model information from HfApi.
-    
+
     Args:
     - model_name: Name of the model to load.
     - return_type: Either 'config' to return model configuration or 'info' to return model info from HfApi.
-    
+
     Returns:
     - Model configuration or model information.
     """
@@ -1435,31 +1133,31 @@ async def get_model_info(
         raise HTTPException(status_code=400, detail="Invalid return_type. Use 'config' or 'info'.")
 
     try:
-        if return_type == "config": 
-            model_path = os.path.join(config.DOWNLOAD_DIRECTORY , model_name.replace('/', '--'))     
+        if return_type == "config":
+            model_path = os.path.join(config.DOWNLOAD_DIRECTORY, model_name.replace('/', '--'))
 
             # First, look for 'config.json' in the model directory
             config_path = os.path.join(model_path, 'config.json')
             if os.path.exists(config_path):
                 # Load configuration from the local path
                 config_file = AutoConfig.from_pretrained(model_path)
-                
+
                 return ModelInfoResponse(
                     model_name=model_name,
                     config=config_file.to_dict()
                 )
             else:
-                # If 'config.json' is not found, check for '*.gguf' files                
+                # If 'config.json' is not found, check for '*.gguf' files
                 gguf_pattern = os.path.join(model_path, "*.[gG][gG][uU][fF]")
                 gguf_files_full = glob.glob(gguf_pattern)
-                
+
                 # Extract only the base file names
                 gguf_files = [os.path.basename(f) for f in gguf_files_full]
-                
+
                 model_type = "unknown"
                 if gguf_files:
                     model_type = "text-generation"
-                
+
                 if model_type == "text-generation" and gguf_files:
                     return ModelInfoResponse(
                         model_name=model_name,
@@ -1483,10 +1181,10 @@ async def get_model_info(
                             "file_names": gguf_files if gguf_files else []
                         }
                     )
-        
-        else: 
+
+        else:
             model_info = await asyncio.to_thread(fetch_model_info, model_name, api_key=effective_api_key)
-           
+
             info_dict = {
                 "model_id": model_info.modelId,
                 "pipeline_tag": model_info.pipeline_tag,
@@ -1503,25 +1201,27 @@ async def get_model_info(
                 "last_updated": model_info.lastModified,
                 "safetensors": model_info.safetensors
             }
-        
+
             model_type = model_info.pipeline_tag or "unknown"
 
             return ModelInfoResponse(
                 model_name=model_name,
                 info=info_dict
             )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-       
-    
+
+
 async def send_ws_message(client_id: str, message: str, msg_type: str = "progress"):
     json_message = json.dumps({"type": msg_type, "message": message})
     await manager.send_message(client_id, json_message)
     await asyncio.sleep(0.01)  # Prevents busy waiting
 
+
 async def send_progress(client_id: str, message: str):
     await send_ws_message(client_id, message, "progress")
+
 
 async def progress_sender(client_id: str, queue: asyncio.Queue):
     while True:
@@ -1530,6 +1230,7 @@ async def progress_sender(client_id: str, queue: asyncio.Queue):
             break
         await send_progress(client_id, message)
         queue.task_done()
+
 
 def validate_token_ids(tokenized_dataset, tokenizer):
     total_invalid = 0
@@ -1548,6 +1249,7 @@ def validate_token_ids(tokenized_dataset, tokenizer):
     print(f"Total invalid token ids: {total_invalid}")
     return total_invalid == 0
 
+
 def check_token_id_ranges(dataset, keys, tokenizer):
     for key in keys:
         all_ids = []
@@ -1563,7 +1265,7 @@ def check_token_id_ranges(dataset, keys, tokenizer):
         max_id = max(all_ids)
         print(f"Min and max token IDs in '{key}': {min_id}, {max_id}", flush=True)
         if min_id < 0 or max_id >= tokenizer.vocab_size:
-            print(f"ERROR: token IDs in '{key}' out of allowed range [0, {tokenizer.vocab_size-1}]")
+            print(f"ERROR: token IDs in '{key}' out of allowed range [0, {tokenizer.vocab_size - 1}]")
 
 
 def preprocess_function_seq2seq(examples, request, is_multilingual, model_type, tokenizer, model):
@@ -1592,7 +1294,7 @@ def preprocess_function_seq2seq(examples, request, is_multilingual, model_type, 
     vocab_size = tokenizer.vocab_size
     unk_token_id = tokenizer.unk_token_id if tokenizer.unk_token_id is not None else 0
     bos_token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else \
-                   model.config.decoder_start_token_id if hasattr(model.config, 'decoder_start_token_id') else unk_token_id
+        model.config.decoder_start_token_id if hasattr(model.config, 'decoder_start_token_id') else unk_token_id
 
     cleaned_labels = []
     for seq in labels:
@@ -1612,6 +1314,7 @@ def preprocess_function_seq2seq(examples, request, is_multilingual, model_type, 
     model_inputs["decoder_input_ids"] = decoder_input_ids
 
     return model_inputs
+
 
 def preprocess_function_causal(examples, request, tokenizer):
     inputs = examples["source"]
@@ -1649,11 +1352,12 @@ def preprocess_function_causal(examples, request, tokenizer):
 
     return model_inputs
 
+
 @router.post("/model/fine-tune", summary="Fine-Tune a Pretrained Translation Model",
              description="Fine-tunes a pretrained translation model with provided parameters and sends real-time progress updates via WebSocket.")
 async def fine_tune(
-    request: FineTuneRequest,
-    background_tasks: BackgroundTasks
+        request: FineTuneRequest,
+        background_tasks: BackgroundTasks
 ):
     """
     Initiates the fine-tuning of a pretrained translation model based on the provided parameters.
@@ -1679,6 +1383,7 @@ async def fine_tune(
         "message": "Fine-tuning has started. You will receive progress updates via WebSocket.",
         "status": "started"
     }
+
 
 async def fine_tune_model(request: 'FineTuneRequest'):
     client_id = request.client_id
@@ -1737,7 +1442,8 @@ async def fine_tune_model(request: 'FineTuneRequest'):
 
         if model_type == "translation":
             model = AutoModelForSeq2SeqLM.from_pretrained(request.model_path)
-            preprocess_fn = partial(preprocess_function_seq2seq, request=request, is_multilingual=True, model_type=model_type, tokenizer=tokenizer, model=model)
+            preprocess_fn = partial(preprocess_function_seq2seq, request=request, is_multilingual=True,
+                                    model_type=model_type, tokenizer=tokenizer, model=model)
             training_args_class = Seq2SeqTrainingArguments
         else:
             model = AutoModelForCausalLM.from_pretrained(request.model_path)
@@ -1836,10 +1542,13 @@ async def fine_tune_model(request: 'FineTuneRequest'):
         await progress_task
         model_states.pop(client_id, None)
 
+
 class DebugCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
-        print(f"Step {state.global_step} completed, loss: {state.log_history[-1].get('loss') if state.log_history else 'N/A'}")
-              
+        print(
+            f"Step {state.global_step} completed, loss: {state.log_history[-1].get('loss') if state.log_history else 'N/A'}")
+
+
 class WebSocketProgressCallback(TrainerCallback):
     def __init__(self, client_id: str, queue: asyncio.Queue):
         self.client_id = client_id
@@ -1879,8 +1588,10 @@ class WebSocketProgressCallback(TrainerCallback):
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs:
-            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join([f"{k}: {v}" for k,v in logs.items()])
+            message = f"Epoch {state.epoch} | Step {state.global_step}: " + ", ".join(
+                [f"{k}: {v}" for k, v in logs.items()])
             self.queue.put_nowait(message)
+
 
 class CancelTrainingCallback(TrainerCallback):
     def __init__(self, client_id: str):
