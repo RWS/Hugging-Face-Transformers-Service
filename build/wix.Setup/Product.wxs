@@ -9,9 +9,10 @@
            Manufacturer="$(var.manufacturer)"
            UpgradeCode="$(var.upgradeCode)">
 
-    <Package InstallerVersion="200"
-             Compressed="yes"
-             InstallScope="perUser" />
+	  <Package InstallerVersion="500"
+		   Compressed="yes"
+		   InstallScope="perMachine"
+		   InstallPrivileges="elevated" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   AllowSameVersionUpgrades="yes"
@@ -33,21 +34,39 @@
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
 
-    <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">
+	  <Feature Id="ProductFeature" Title="$(var.appName)" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
-      <ComponentRef Id="ApplicationShortcutDesktop"/>
-      <ComponentRef Id="ApplicationShortcutStartMenu"/>
+		<ComponentGroupRef Id="NssmComponents" />
     </Feature>
 
-    <InstallExecuteSequence>
-      <Custom Action="SaveUserConfigurationAction" After="InstallFinalize">NOT Installed</Custom>
-    </InstallExecuteSequence>
+	  <InstallExecuteSequence>
+		  <!-- 1. Install files first -->
+		  <!-- 2. Set CustomActionData for deferred DLL -->
+		  <Custom Action="SetSaveUserConfigData" After="InstallFiles">NOT Installed</Custom>
+
+		  <!-- 3. Run deferred DLL -->
+		  <Custom Action="SaveUserConfigurationAction" After="SetSaveUserConfigData">NOT Installed</Custom>
+
+		  <!-- 4. NSSM service setup -->
+		  <Custom Action="InstallNssmService" After="SaveUserConfigurationAction">NOT Installed</Custom>
+		  <Custom Action="SetNssmServiceDisplayName" After="InstallNssmService">NOT Installed</Custom>
+		  <Custom Action="SetNssmServiceDescription" After="SetNssmServiceDisplayName">NOT Installed</Custom>
+		  <Custom Action="StartNssmService" After="SetNssmServiceDescription">NOT Installed</Custom>
+
+		  <!-- Stop and remove NSSM service on uninstall -->
+		  <Custom Action="StopNssmService" Before="RemoveFiles">REMOVE="ALL"</Custom>
+		  <Custom Action="RemoveNssmService" After="StopNssmService">REMOVE="ALL"</Custom>
+	  </InstallExecuteSequence>
+
+
+
 
   </Product>
 
   <Fragment>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="INSTALLFOLDER" Name="InstallDir">
+		  <Directory Id="ToolsFolder" Name="tools" />
       </Directory>
       <Directory Id="DesktopFolder" Name="Desktop"></Directory>
 
@@ -57,56 +76,122 @@
     </Directory>
   </Fragment>
 
-  <Fragment>
-    <Binary Id='SaveUserConfigurationBinary'
-            SourceFile='..\bin\Debug\HuggingFaceTS.ConfigurationTasks.CA.dll' />
+	<!-- Deferred SaveUserConfiguration action -->
 
-    <CustomAction Id='SaveUserConfigurationAction'
-                  BinaryKey='SaveUserConfigurationBinary'
-                  DllEntry='SaveUserConfiguration'
-                  Execute="immediate"
-                  Return="check"/>
-  </Fragment>
+	<Fragment>
+		<!-- DLL binary -->
+		<Binary Id="SaveUserConfigurationBinary" SourceFile="..\bin\Debug\HuggingFaceTS.ConfigurationTasks.CA.dll" />
 
-  <Fragment>
+		<!-- Immediate property setter for deferred action -->
+		<CustomAction Id="SetSaveUserConfigData"
+					  Property="SaveUserConfigurationAction"
+					  Value="INSTALLFOLDER=[INSTALLFOLDER];HUGGINGFACE_MODELS_DIR=[HUGGINGFACE_MODELS_DIR];HUGGINGFACE_TOKEN=[HUGGINGFACE_TOKEN];HOST=[HOST];PORT=[PORT]"
+					  Execute="immediate" />
+
+		<!-- Deferred DLL action -->
+		<CustomAction Id="SaveUserConfigurationAction"
+					  BinaryKey="SaveUserConfigurationBinary"
+					  DllEntry="SaveUserConfiguration"
+					  Execute="deferred"
+					  Impersonate="no"
+					  Return="check" />
+	</Fragment>
+
+	<!-- NSSM custom actions -->
+	<Fragment>
+		<CustomAction Id="InstallNssmService"
+					  Directory="ToolsFolder"
+					  ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" install "HuggingFaceTS" "[INSTALLFOLDER]HuggingFace-TS.exe"'
+					  Execute="deferred"
+					  Impersonate="no"
+				      HideTarget="yes"
+					  
+					  Return="check" />
+
+		<CustomAction Id="SetNssmServiceDisplayName"
+					  Directory="ToolsFolder"
+					  ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" set "HuggingFaceTS" DisplayName "HuggingFace Transformers Service"'
+					  Execute="deferred"
+					  Impersonate="no"
+				      HideTarget="yes"
+					  
+					  Return="check" />
+
+		<CustomAction Id="SetNssmServiceDescription"
+					  Directory="ToolsFolder"
+					  ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" set "HuggingFaceTS" Description "Hugging Face Transformers background service for model inference"'
+					  Execute="deferred"
+					  Impersonate="no"
+				      HideTarget="yes"
+					  Return="check" />
+
+		<CustomAction Id="StartNssmService"
+              Directory="ToolsFolder"
+              ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" start "HuggingFaceTS"'
+              Execute="deferred"
+              Impersonate="no"
+		      HideTarget="yes"
+              Return="ignore" />
+	</Fragment>
+
+	<!-- NSSM uninstall custom actions -->
+	<Fragment>
+		<!-- Stop the service -->
+		<CustomAction Id="StopNssmService"
+					  Directory="ToolsFolder"
+					  ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" stop "HuggingFaceTS"'
+					  Execute="deferred"
+					  Impersonate="no"
+					  HideTarget="yes"
+					  Return="ignore" />
+
+		<!-- Remove the service -->
+		<CustomAction Id="RemoveNssmService"
+					  Directory="ToolsFolder"
+					  ExeCommand='"[INSTALLFOLDER]tools\nssm.exe" remove "HuggingFaceTS" confirm'
+					  Execute="deferred"
+					  Impersonate="no"
+					  HideTarget="yes"
+					  Return="check" />
+	</Fragment>
+	<Fragment>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="HuggingFaceTS" Guid="0C242C05-5E6C-4E45-9A00-8ED5F5A0EABB">
         <File Source="..\..\dist\HuggingFace-TS.exe" KeyPath="yes" />
       </Component>
-      <Component Id="EnvFile" Guid="31B020C2-7FDC-434E-89D6-DB81A7B83DE5">
-        <File Source="..\..\dist\.env" KeyPath="yes" />
-      </Component>
+		<Component Id="Env" Guid="D0BF9D75-6010-457F-99D4-9D2ED36AFED8">
+			<File Source="..\..\dist\.env" KeyPath="yes" />
+		</Component>
     </ComponentGroup>
   </Fragment>
 
-  <Fragment>
-    <!-- Desktop Shortcut -->
-    <DirectoryRef Id="DesktopFolder">
-      <Component Id="ApplicationShortcutDesktop" Guid="A84CB083-1030-49CF-A32B-1801CE685FDD">
-        <Shortcut Id="ApplicationDesktopShortcut"
-                  Name="$(var.appName)"
-                  Description="$(var.appName)"
-                  Target="[INSTALLFOLDER]\HuggingFace-TS.exe"
-                  WorkingDirectory="INSTALLFOLDER"
-                  Icon="icon.ico"/>
-        <RemoveFolder Id="RemoveDesktopShortcuts" On="uninstall"/>
-        <RegistryValue Root="HKCU" Key="Software\HuggingFace-TS" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
-      </Component>
-    </DirectoryRef>
+	<!-- NSSM Components -->
+	<Fragment>
+		<ComponentGroup Id="NssmComponents">
 
-    <!-- Start Menu Shortcut -->
-    <DirectoryRef Id="ApplicationProgramsFolder">
-      <Component Id="ApplicationShortcutStartMenu" Guid="52A84EC2-6809-4CD1-867F-ACA3C702AD50">
-        <Shortcut Id="ApplicationStartMenuShortcut"
-                  Name="$(var.appName)"
-                  Description="$(var.appName)"
-                  Target="[INSTALLFOLDER]\HuggingFace-TS.exe"
-                  WorkingDirectory="INSTALLFOLDER"
-                  Icon="icon.ico"/>
-        <RemoveFolder Id="RemoveStartMenuShortcuts" On="uninstall"/>
-        <RegistryValue Root="HKCU" Key="Software\HuggingFace-TS" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
-      </Component>
-    </DirectoryRef>
-  </Fragment>
+			<!-- 64-bit NSSM -->
+			<Component Id="Nssm64"
+					   Directory="ToolsFolder"
+					   Guid="861CF4F6-A948-4D7B-A8BB-C9CFFC819927">
+				<Condition>VersionNT64</Condition>
+				<File Id="Nssm64Exe"
+					  Source="..\..\dist\nssm64.exe"
+					  Name="nssm.exe"
+					  KeyPath="yes" />
+			</Component>
 
+			<!-- 32-bit NSSM -->
+			<Component Id="Nssm32"
+					   Directory="ToolsFolder"
+					   Guid="04906213-F3E6-4A1C-AE12-DF529E40BF9E">
+				<Condition>NOT VersionNT64</Condition>
+				<File Id="Nssm32Exe" 
+					  Source="..\..\dist\nssm32.exe"
+					  Name="nssm.exe"
+					  KeyPath="yes" />
+			</Component>
+
+		</ComponentGroup>
+	</Fragment>
+	
 </Wix>
